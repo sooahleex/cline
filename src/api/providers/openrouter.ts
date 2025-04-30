@@ -76,6 +76,9 @@ export class OpenRouterHandler implements ApiHandler {
 			if (!didOutputUsage && chunk.usage) {
 				yield {
 					type: "usage",
+					cacheWriteTokens: 0,
+					cacheReadTokens: chunk.usage.prompt_tokens_details?.cached_tokens || 0,
+					id: this.lastGenerationId,
 					inputTokens: chunk.usage.prompt_tokens || 0,
 					outputTokens: chunk.usage.completion_tokens || 0,
 					// @ts-ignore-next-line
@@ -106,6 +109,7 @@ export class OpenRouterHandler implements ApiHandler {
 					// cacheWriteTokens: 0,
 					// cacheReadTokens: 0,
 					// openrouter generation endpoint fails often
+					id: this.lastGenerationId,
 					inputTokens: generation?.native_tokens_prompt || 0,
 					outputTokens: generation?.native_tokens_completion || 0,
 					totalCost: generation?.total_cost || 0,

@@ -89,7 +89,7 @@ import { getGlobalState } from "../storage/state"
 import { parseSlashCommands } from ".././slash-commands"
 import WorkspaceTracker from "../../integrations/workspace/WorkspaceTracker"
 import { McpHub } from "../../services/mcp/McpHub"
-import { PhaseTracker, extractThinkingWithPaths } from "../assistant-message";
+import { PhaseTracker, extractThinkingWithPaths } from "../assistant-message"
 
 export const cwd =
 	vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath).at(0) ?? path.join(os.homedir(), "Desktop") // may or may not exist but fs checking existence would immediately ask for permission which would be bad UX, need to come up with a better solution
@@ -3448,6 +3448,8 @@ export class Task {
 							cacheWriteTokens += chunk.cacheWriteTokens ?? 0
 							cacheReadTokens += chunk.cacheReadTokens ?? 0
 							totalCost = chunk.totalCost
+							saveTokenData(chunk.inputTokens, chunk.outputTokens, chunk.id)
+							console.log("Token data saved:", chunk.inputTokens, chunk.outputTokens)
 							break
 						case "reasoning":
 							// reasoning will always come before assistant message
@@ -3562,45 +3564,45 @@ export class Task {
 				})
 
 				// Initialize phase tracker with the assistant message and original prompt
-				const originalPrompt = userContent[0]?.type === "text" ? userContent[0].text : "";
-				const tracker = new PhaseTracker(assistantMessage, originalPrompt);
+				const originalPrompt = userContent[0]?.type === "text" ? userContent[0].text : ""
+				const tracker = new PhaseTracker(assistantMessage, originalPrompt)
 
 				// Process each phase
 				while (tracker.hasNextPhase()) {
-					const nextPrompt = tracker.moveToNextPhase();
-					if (!nextPrompt) break;
+					const nextPrompt = tracker.moveToNextPhase()
+					if (!nextPrompt) break
 
 					// Make API request for this phase
-					const phaseStream = this.attemptApiRequest(this.clineMessages.length);
-					let phaseResponse = "";
-					let phaseReasoningMessage = "";
+					const phaseStream = this.attemptApiRequest(this.clineMessages.length)
+					let phaseResponse = ""
+					let phaseReasoningMessage = ""
 
 					try {
 						for await (const chunk of phaseStream) {
-							if (!chunk) continue;
+							if (!chunk) continue
 							switch (chunk.type) {
 								case "reasoning":
-									phaseReasoningMessage += chunk.reasoning;
+									phaseReasoningMessage += chunk.reasoning
 									if (!this.abort) {
-										await this.say("reasoning", phaseReasoningMessage, undefined, true);
+										await this.say("reasoning", phaseReasoningMessage, undefined, true)
 									}
-									break;
+									break
 								case "text":
 									if (phaseReasoningMessage && phaseResponse.length === 0) {
-										await this.say("reasoning", phaseReasoningMessage, undefined, false);
+										await this.say("reasoning", phaseReasoningMessage, undefined, false)
 									}
-									phaseResponse += chunk.text;
-									break;
+									phaseResponse += chunk.text
+									break
 							}
 						}
 					} catch (error) {
 						if (!this.abandoned) {
-							this.abortTask();
-							const errorMessage = this.formatErrorWithStatusCode(error);
-							await abortStream("streaming_failed", errorMessage);
-							await this.reinitExistingTaskFromId(this.taskId);
+							this.abortTask()
+							const errorMessage = this.formatErrorWithStatusCode(error)
+							await abortStream("streaming_failed", errorMessage)
+							await this.reinitExistingTaskFromId(this.taskId)
 						}
-						break;
+						break
 					}
 
 					// Add phase response to conversation history
@@ -3608,11 +3610,11 @@ export class Task {
 						await this.addToApiConversationHistory({
 							role: "assistant",
 							content: [{ type: "text", text: phaseResponse }],
-						});
+						})
 					}
 
 					// Approve the current phase
-					tracker.approveCurrentPhase();
+					tracker.approveCurrentPhase()
 				}
 
 				// NOTE: this comment is here for future reference - this was a workaround for userMessageContent not getting set to true. It was due to it not recursively calling for partial blocks when didRejectTool, so it would get stuck waiting for a partial block to complete before it could continue.

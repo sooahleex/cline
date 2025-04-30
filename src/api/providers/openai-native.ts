@@ -34,6 +34,7 @@ export class OpenAiNativeHandler implements ApiHandler {
 		const nonCachedInputTokens = Math.max(0, inputTokens - cacheReadTokens - cacheWriteTokens)
 		yield {
 			type: "usage",
+			id: this.options.taskId,
 			inputTokens: nonCachedInputTokens,
 			outputTokens: outputTokens,
 			cacheWriteTokens: cacheWriteTokens,

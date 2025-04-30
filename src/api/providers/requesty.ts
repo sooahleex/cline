@@ -91,6 +91,7 @@ export class RequestyHandler implements ApiHandler {
 
 				yield {
 					type: "usage",
+					id: model.id,
 					inputTokens: inputTokens,
 					outputTokens: outputTokens,
 					cacheWriteTokens: cacheWriteTokens,

@@ -13,6 +13,7 @@ export interface ApiStreamReasoningChunk {
 
 export interface ApiStreamUsageChunk {
 	type: "usage"
+	id?: string
 	inputTokens: number
 	outputTokens: number
 	cacheWriteTokens?: number

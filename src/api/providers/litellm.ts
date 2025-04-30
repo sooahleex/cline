@@ -156,6 +156,7 @@ export class LiteLlmHandler implements ApiHandler {
 
 				yield {
 					type: "usage",
+					id: this.options.taskId,
 					inputTokens: usage.prompt_tokens || 0,
 					outputTokens: usage.completion_tokens || 0,
 					cacheWriteTokens: cacheWriteTokens > 0 ? cacheWriteTokens : undefined,

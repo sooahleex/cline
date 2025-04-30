@@ -15,7 +15,7 @@ Based on the **exact tag contents** you just generated, group them into logical,
 3. Have a clear completion point  
 
 Return first the full \`assistantMessage\`, then **only** a numbered list of phases, each with its associated tag lines.`,
-} as const;
+} as const
 
 export function convertToOpenAiMessages(
 	anthropicMessages: Anthropic.Messages.MessageParam[],
@@ -167,8 +167,8 @@ export function convertToOpenAiMessages(
 	if (openAiMessages.length > 0 && openAiMessages[0].role === "user") {
 		openAiMessages.splice(1, 0, {
 			role: "user",
-			content: PROMPTS.PLANNING
-		});
+			content: PROMPTS.PLANNING,
+		})
 	}
 
 	return openAiMessages

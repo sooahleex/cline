@@ -63,78 +63,78 @@ export interface ToolUse {
 	partial: boolean
 }
 
-export type PhaseStatus = 'pending' | 'approved';
+export type PhaseStatus = "pending" | "approved"
 
 export interface Phase {
-  index: number;            // 1부터 시작하는 Phase 번호
-  thinking: string;         // <thinking>…</thinking> 콘텐츠
-  paths: string[];          // 이 Phase에서 다룰 파일 경로들
-  status: PhaseStatus;      // 'pending' 또는 'approved'
+	index: number // 1부터 시작하는 Phase 번호
+	thinking: string // <thinking>…</thinking> 콘텐츠
+	paths: string[] // 이 Phase에서 다룰 파일 경로들
+	status: PhaseStatus // 'pending' 또는 'approved'
 }
 
-const TAG_REGEX = /<(thinking|path)>([\s\S]*?)<\/\1>/g;
+const TAG_REGEX = /<(thinking|path)>([\s\S]*?)<\/\1>/g
 
 export function parsePhases(raw: string): Phase[] {
-	const phases: Phase[] = [];
-	let current: Phase | null = null;
-	let match: RegExpExecArray | null;
-  
+	const phases: Phase[] = []
+	let current: Phase | null = null
+	let match: RegExpExecArray | null
+
 	while ((match = TAG_REGEX.exec(raw)) !== null) {
-	  const [ , tag, content ] = match;
-	  const text = content.trim();
-  
-	  if (tag === 'thinking') {
-		current = {
-		  index: phases.length + 1,
-		  thinking: text,
-		  paths: [],
-		  status: 'pending',
-		};
-		phases.push(current);
-	  } else if (tag === 'path' && current) {
-		current.paths.push(text);
-	  }
+		const [, tag, content] = match
+		const text = content.trim()
+
+		if (tag === "thinking") {
+			current = {
+				index: phases.length + 1,
+				thinking: text,
+				paths: [],
+				status: "pending",
+			}
+			phases.push(current)
+		} else if (tag === "path" && current) {
+			current.paths.push(text)
+		}
 	}
-  
-	return phases;
+
+	return phases
 }
 
 /**
  * 어시스턴트 메시지에서 <thinking> 블록과 <path> 태그 내용을 추출합니다.
  */
 export interface ThoughtWithPaths {
-  thinking: string;
-  paths: string[];
+	thinking: string
+	paths: string[]
 }
 /**
  * 어시스턴트 메시지 문자열에서 <thinking> 태그와 <path> 태그 내용을 추출합니다.
  */
 export function extractThinkingWithPaths(assistantMessage: string): ThoughtWithPaths[] {
 	// thinking 또는 path 둘 다 한 번에 잡아내는 정규식
-	const tagRegex = /<(thinking|path)>([\s\S]*?)<\/\1>/g;
-  
-	const result: ThoughtWithPaths[] = [];
-	let current: ThoughtWithPaths | null = null;
-	let match: RegExpExecArray | null;
-  
-	while ((match = tagRegex.exec(assistantMessage)) !== null) {
-	  const tag = match[1];           // 'thinking' 또는 'path'
-	  const content = match[2].trim();
-  
-	  if (tag === 'thinking') {
-		// 새로운 thinking 등장 → 그룹 시작
-		current = { thinking: content, paths: [] };
-		result.push(current);
-	  } else if (tag === 'path') {
-		// path는 마지막 thinking 그룹에 추가
-		if (current) {
-		  current.paths.push(content);
-		}
-		// 만약 current가 null이면, 첫 thinking 이전에 path가 있었단 의미이므로 무시하거나 별도로 처리 가능
-	  }
-	}
-  
-	return result;
-  }
+	const tagRegex = /<(thinking|path)>([\s\S]*?)<\/\1>/g
 
-export { PhaseTracker } from './phase-tracker';
+	const result: ThoughtWithPaths[] = []
+	let current: ThoughtWithPaths | null = null
+	let match: RegExpExecArray | null
+
+	while ((match = tagRegex.exec(assistantMessage)) !== null) {
+		const tag = match[1] // 'thinking' 또는 'path'
+		const content = match[2].trim()
+
+		if (tag === "thinking") {
+			// 새로운 thinking 등장 → 그룹 시작
+			current = { thinking: content, paths: [] }
+			result.push(current)
+		} else if (tag === "path") {
+			// path는 마지막 thinking 그룹에 추가
+			if (current) {
+				current.paths.push(content)
+			}
+			// 만약 current가 null이면, 첫 thinking 이전에 path가 있었단 의미이므로 무시하거나 별도로 처리 가능
+		}
+	}
+
+	return result
+}
+
+export { PhaseTracker } from "./phase-tracker"
