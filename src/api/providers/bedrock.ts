@@ -110,6 +110,7 @@ export class AwsBedrockHandler implements ApiHandler {
 					const usage = chunk.message.usage
 					yield {
 						type: "usage",
+						id: chunk.message.id,
 						inputTokens: usage.input_tokens || 0,
 						outputTokens: usage.output_tokens || 0,
 						cacheWriteTokens: usage.cache_creation_input_tokens || undefined,
@@ -351,6 +352,7 @@ export class AwsBedrockHandler implements ApiHandler {
 							const totalCost = calculateApiCostOpenAI(model.info, inputTokenEstimate, 0, 0, 0)
 							yield {
 								type: "usage",
+								id: parsedChunk.id,
 								inputTokens: inputTokenEstimate,
 								outputTokens: 0,
 								totalCost: totalCost,

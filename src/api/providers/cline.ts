@@ -76,6 +76,7 @@ export class ClineHandler implements ApiHandler {
 					type: "usage",
 					cacheWriteTokens: 0,
 					cacheReadTokens: chunk.usage.prompt_tokens_details?.cached_tokens || 0,
+					id: this.lastGenerationId,
 					inputTokens: chunk.usage.prompt_tokens || 0,
 					outputTokens: chunk.usage.completion_tokens || 0,
 					// @ts-ignore-next-line

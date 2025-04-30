@@ -54,6 +54,7 @@ export class SambanovaHandler implements ApiHandler {
 			if (chunk.usage) {
 				yield {
 					type: "usage",
+					id: chunk.id,
 					inputTokens: chunk.usage.prompt_tokens || 0,
 					outputTokens: chunk.usage.completion_tokens || 0,
 				}

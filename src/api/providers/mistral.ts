@@ -45,6 +45,7 @@ export class MistralHandler implements ApiHandler {
 			if (chunk.data.usage) {
 				yield {
 					type: "usage",
+					id: chunk.id,
 					inputTokens: chunk.data.usage.promptTokens || 0,
 					outputTokens: chunk.data.usage.completionTokens || 0,
 				}

@@ -135,6 +135,7 @@ export class AnthropicHandler implements ApiHandler {
 					const usage = chunk.message.usage
 					yield {
 						type: "usage",
+						id: chunk.message.id,
 						inputTokens: usage.input_tokens || 0,
 						outputTokens: usage.output_tokens || 0,
 						cacheWriteTokens: usage.cache_creation_input_tokens || undefined,
@@ -146,6 +147,7 @@ export class AnthropicHandler implements ApiHandler {
 
 					yield {
 						type: "usage",
+						id: undefined,
 						inputTokens: 0,
 						outputTokens: chunk.usage.output_tokens || 0,
 					}

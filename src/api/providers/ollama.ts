@@ -52,6 +52,7 @@ export class OllamaHandler implements ApiHandler {
 					if (chunk.eval_count !== undefined || chunk.prompt_eval_count !== undefined) {
 						yield {
 							type: "usage",
+							id: chunk.id,
 							inputTokens: chunk.prompt_eval_count || 0,
 							outputTokens: chunk.eval_count || 0,
 						}

@@ -44,6 +44,7 @@ export class DeepSeekHandler implements ApiHandler {
 		const nonCachedInputTokens = Math.max(0, inputTokens - cacheReadTokens - cacheWriteTokens) // this will always be 0
 		yield {
 			type: "usage",
+			id: this.options.taskId,
 			inputTokens: nonCachedInputTokens,
 			outputTokens: outputTokens,
 			cacheWriteTokens: cacheWriteTokens,
