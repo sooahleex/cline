@@ -158,10 +158,12 @@ export class ContextManager {
 						anyContextUpdates = this.applyStandardContextTruncationNoticeChange(timestamp) || anyContextUpdates
 
 						// NOTE: it's okay that we overwriteConversationHistory in resume task since we're only ever removing the last user message and not anything in the middle which would affect this range
+						const { maxAllowedSize } = getContextWindowInfo(api);
 						conversationHistoryDeletedRange = this.getNextTruncationRange(
 							apiConversationHistory,
 							conversationHistoryDeletedRange,
-							keep,
+							// keep,
+							maxAllowedSize,
 						)
 
 						updatedConversationHistoryDeletedRange = true
@@ -193,38 +195,51 @@ export class ContextManager {
 	public getNextTruncationRange(
 		apiMessages: Anthropic.Messages.MessageParam[],
 		currentDeletedRange: [number, number] | undefined,
-		keep: "half" | "quarter",
+		// keep: "half" | "quarter",
+		maxAllowedTokens: number,
 	): [number, number] {
 		// We always keep the first user-assistant pairing, and truncate an even number of messages from there
-		const rangeStartIndex = 2 // index 0 and 1 are kept
-		const startOfRest = currentDeletedRange ? currentDeletedRange[1] + 1 : 2 // inclusive starting index
+		const totalMessages = apiMessages.length;
+		const tokenCounts = apiMessages.map(m => this.countTokens(m));
 
-		let messagesToRemove: number
-		if (keep === "half") {
-			// Remove half of remaining user-assistant pairs
-			// We first calculate half of the messages then divide by 2 to get the number of pairs.
-			// After flooring, we multiply by 2 to get the number of messages.
-			// Note that this will also always be an even number.
-			messagesToRemove = Math.floor((apiMessages.length - startOfRest) / 4) * 2 // Keep even number
-		} else {
-			// Remove 3/4 of remaining user-assistant pairs
-			// We calculate 3/4ths of the messages then divide by 2 to get the number of pairs.
-			// After flooring, we multiply by 2 to get the number of messages.
-			// Note that this will also always be an even number.
-			messagesToRemove = Math.floor(((apiMessages.length - startOfRest) * 3) / 4 / 2) * 2
+		// 1) 뒤에서부터 누적하면서 maxAllowedTokens를 초과하지 않는 범위의 시작 인덱스를 찾는다.
+		let accumulated = 0;
+		let windowStart = totalMessages; // 유지할 구간의 시작 인덱스
+		for (let i = totalMessages - 1; i >= 0; i--) {
+			if (accumulated + tokenCounts[i] > maxAllowedTokens) {
+				break;
+			}
+			accumulated += tokenCounts[i];
+			windowStart = i;
 		}
 
-		let rangeEndIndex = startOfRest + messagesToRemove - 1 // inclusive ending index
-
+		// 2) 항상 첫번째 user-assistant 쌍을 유지하고, 그 이후의 메시지에서 짝수 개의 메시지를 제거한다.
+		const prevDeleteEnd = currentDeletedRange ? currentDeletedRange[1] : -1;
+		const deleteStart = prevDeleteEnd + 1; // 삭제할 메시지의 시작 인덱스
+  		
+		// 3) windowStart 바로 앞까지(deleteStart…windowStart-1) 삭제
+  		//    단, deleteStart > windowStart-1 이면 삭제할 게 없음
+		let deleteEnd = Math.max(windowStart - 1, deleteStart - 1);
+		
 		// Make sure that the last message being removed is a assistant message, so the next message after the initial user-assistant pair is an assistant message. This preserves the user-assistant-user-assistant structure.
 		// NOTE: anthropic format messages are always user-assistant-user-assistant, while openai format messages can have multiple user messages in a row (we use anthropic format throughout cline)
-		if (apiMessages[rangeEndIndex].role !== "assistant") {
-			rangeEndIndex -= 1
+		if (apiMessages[deleteEnd].role !== "assistant") {
+			deleteEnd -= 1
 		}
 
 		// this is an inclusive range that will be removed from the conversation history
-		return [rangeStartIndex, rangeEndIndex]
+		return [deleteStart, deleteEnd]
 	}
+
+	private countTokens(msg: Anthropic.Messages.MessageParam): number {
+		let text: string;
+		if (typeof msg.content === "string") {
+		  text = msg.content;
+		} else {
+		  text = msg.content.map(b => ("text" in b ? b.text : JSON.stringify(b))).join(" ");
+		}
+		return text.trim().split(/\s+/).filter(Boolean).length;
+	  }
 
 	/**
 	 * external interface to support old calls

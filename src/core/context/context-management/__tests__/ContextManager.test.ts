@@ -32,33 +32,39 @@ describe("ContextManager", () => {
 
 		it("first truncation with half keep", () => {
 			const messages = createMessages(11)
-			const result = contextManager.getNextTruncationRange(messages, undefined, "half")
+			// const result = contextManager.getNextTruncationRange(messages, undefined, "half")
+			const result = contextManager.getNextTruncationRange(messages, undefined, 1000)
 
 			expect(result).to.deep.equal([1, 4])
 		})
 
 		it("first truncation with quarter keep", () => {
 			const messages = createMessages(11)
-			const result = contextManager.getNextTruncationRange(messages, undefined, "quarter")
+			// const result = contextManager.getNextTruncationRange(messages, undefined, "quarter")
+			const result = contextManager.getNextTruncationRange(messages, undefined, 1000)
 
 			expect(result).to.deep.equal([1, 6])
 		})
 
 		it("sequential truncation with half keep", () => {
 			const messages = createMessages(21)
-			const firstRange = contextManager.getNextTruncationRange(messages, undefined, "half")
+			// const firstRange = contextManager.getNextTruncationRange(messages, undefined, "half")
+			const firstRange = contextManager.getNextTruncationRange(messages, undefined, 1000)
 			expect(firstRange).to.deep.equal([1, 10])
 
 			// Pass the previous range for sequential truncation
-			const secondRange = contextManager.getNextTruncationRange(messages, firstRange, "half")
+			// const secondRange = contextManager.getNextTruncationRange(messages, firstRange, "half")
+			const secondRange = contextManager.getNextTruncationRange(messages, firstRange, 1000)
 			expect(secondRange).to.deep.equal([1, 14])
 		})
 
 		it("sequential truncation with quarter keep", () => {
 			const messages = createMessages(41)
-			const firstRange = contextManager.getNextTruncationRange(messages, undefined, "quarter")
+			// const firstRange = contextManager.getNextTruncationRange(messages, undefined, "quarter")
+			const firstRange = contextManager.getNextTruncationRange(messages, undefined, 1000)
 
-			const secondRange = contextManager.getNextTruncationRange(messages, firstRange, "quarter")
+			// const secondRange = contextManager.getNextTruncationRange(messages, firstRange, "quarter")
+			const secondRange = contextManager.getNextTruncationRange(messages, firstRange, 1000)
 
 			expect(secondRange[0]).to.equal(1)
 			expect(secondRange[1]).to.be.greaterThan(firstRange[1])
@@ -66,7 +72,8 @@ describe("ContextManager", () => {
 
 		it("ensures the last message in range is a user message", () => {
 			const messages = createMessages(14)
-			const result = contextManager.getNextTruncationRange(messages, undefined, "half")
+			// const result = contextManager.getNextTruncationRange(messages, undefined, "half")
+			const result = contextManager.getNextTruncationRange(messages, undefined, 1000)
 
 			// Check if the message at the end of range is a user message
 			const lastRemovedMessage = messages[result[1]]
@@ -79,14 +86,16 @@ describe("ContextManager", () => {
 
 		it("handles small message arrays", () => {
 			const messages = createMessages(3)
-			const result = contextManager.getNextTruncationRange(messages, undefined, "half")
+			// const result = contextManager.getNextTruncationRange(messages, undefined, "half")
+			const result = contextManager.getNextTruncationRange(messages, undefined, 1000)
 
 			expect(result).to.deep.equal([1, 0])
 		})
 
 		it("preserves the message structure when truncating", () => {
 			const messages = createMessages(20)
-			const result = contextManager.getNextTruncationRange(messages, undefined, "half")
+			// const result = contextManager.getNextTruncationRange(messages, undefined, "half")
+			const result = contextManager.getNextTruncationRange(messages, undefined, 1000)
 
 			// Get messages after removing the range
 			const effectiveMessages = [...messages.slice(0, result[0]), ...messages.slice(result[1] + 1)]

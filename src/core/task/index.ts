@@ -1409,20 +1409,24 @@ export class Task {
 			const isAnthropicContextWindowError = checkIsAnthropicContextWindowError(error) && isAnthropic
 
 			if (isAnthropic && isAnthropicContextWindowError && !this.didAutomaticallyRetryFailedApiRequest) {
+				const { maxAllowedSize } = getContextWindowInfo(this.api);
 				this.conversationHistoryDeletedRange = this.contextManager.getNextTruncationRange(
 					this.apiConversationHistory,
 					this.conversationHistoryDeletedRange,
-					"quarter", // Force aggressive truncation
+					// "quarter", // Force aggressive truncation
+					maxAllowedSize
 				)
 				await this.saveClineMessagesAndUpdateHistory()
 
 				this.didAutomaticallyRetryFailedApiRequest = true
 			} else if (isOpenRouter && !this.didAutomaticallyRetryFailedApiRequest) {
 				if (isOpenRouterContextWindowError) {
+					const { maxAllowedSize } = getContextWindowInfo(this.api);
 					this.conversationHistoryDeletedRange = this.contextManager.getNextTruncationRange(
 						this.apiConversationHistory,
 						this.conversationHistoryDeletedRange,
-						"quarter", // Force aggressive truncation
+						// "quarter", // Force aggressive truncation
+						maxAllowedSize,
 					)
 					await this.saveClineMessagesAndUpdateHistory()
 				}
