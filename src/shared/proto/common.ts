@@ -37,11 +37,11 @@ export interface Int64 {
 
 export interface BytesRequest {
 	metadata?: Metadata | undefined
-	value: Buffer
+	value: Uint8Array
 }
 
 export interface Bytes {
-	value: Buffer
+	value: Uint8Array
 }
 
 function createBaseMetadata(): Metadata {
@@ -460,7 +460,7 @@ export const Int64: MessageFns<Int64> = {
 }
 
 function createBaseBytesRequest(): BytesRequest {
-	return { metadata: undefined, value: Buffer.alloc(0) }
+	return { metadata: undefined, value: new Uint8Array(0) }
 }
 
 export const BytesRequest: MessageFns<BytesRequest> = {
@@ -494,7 +494,7 @@ export const BytesRequest: MessageFns<BytesRequest> = {
 						break
 					}
 
-					message.value = Buffer.from(reader.bytes())
+					message.value = Uint8Array.from(reader.bytes())
 					continue
 				}
 			}
@@ -509,7 +509,7 @@ export const BytesRequest: MessageFns<BytesRequest> = {
 	fromJSON(object: any): BytesRequest {
 		return {
 			metadata: isSet(object.metadata) ? Metadata.fromJSON(object.metadata) : undefined,
-			value: isSet(object.value) ? Buffer.from(bytesFromBase64(object.value)) : Buffer.alloc(0),
+			value: isSet(object.value) ? Uint8Array.from(bytesFromBase64(object.value)) : new Uint8Array(0),
 		}
 	},
 
@@ -531,13 +531,13 @@ export const BytesRequest: MessageFns<BytesRequest> = {
 		const message = createBaseBytesRequest()
 		message.metadata =
 			object.metadata !== undefined && object.metadata !== null ? Metadata.fromPartial(object.metadata) : undefined
-		message.value = object.value ?? Buffer.alloc(0)
+		message.value = object.value ?? new Uint8Array(0)
 		return message
 	},
 }
 
 function createBaseBytes(): Bytes {
-	return { value: Buffer.alloc(0) }
+	return { value: new Uint8Array(0) }
 }
 
 export const Bytes: MessageFns<Bytes> = {
@@ -560,7 +560,7 @@ export const Bytes: MessageFns<Bytes> = {
 						break
 					}
 
-					message.value = Buffer.from(reader.bytes())
+					message.value = Uint8Array.from(reader.bytes())
 					continue
 				}
 			}
@@ -573,7 +573,7 @@ export const Bytes: MessageFns<Bytes> = {
 	},
 
 	fromJSON(object: any): Bytes {
-		return { value: isSet(object.value) ? Buffer.from(bytesFromBase64(object.value)) : Buffer.alloc(0) }
+		return { value: isSet(object.value) ? Uint8Array.from(bytesFromBase64(object.value)) : new Uint8Array(0) }
 	},
 
 	toJSON(message: Bytes): unknown {
@@ -589,17 +589,18 @@ export const Bytes: MessageFns<Bytes> = {
 	},
 	fromPartial<I extends Exact<DeepPartial<Bytes>, I>>(object: I): Bytes {
 		const message = createBaseBytes()
-		message.value = object.value ?? Buffer.alloc(0)
+		message.value = object.value ?? new Uint8Array(0)
 		return message
 	},
 }
 
 function bytesFromBase64(b64: string): Uint8Array {
-	return Uint8Array.from(globalThis.Buffer.from(b64, "base64"))
+	return Uint8Array.from(atob(b64), c => c.charCodeAt(0))
 }
 
 function base64FromBytes(arr: Uint8Array): string {
-	return globalThis.Buffer.from(arr).toString("base64")
+	const bytes = Array.from(arr)
+	return btoa(bytes.reduce((data, byte) => data + globalThis.String.fromCharCode(byte), ''))
 }
 
 type Builtin = Date | Function | Uint8Array | string | number | boolean | undefined

@@ -1,8 +1,12 @@
 {
 	"extends": "./tsconfig.json",
 	"compilerOptions": {
-		"module": "commonjs"
+		"module": "commonjs",
+		"types": ["mocha", "chai", "node"],
+		"paths": {
+			"vscode": ["./test/mocks/vscode"]
+		}
 	},
-	"include": ["test/**/*.ts"],
+	"include": ["test/**/*.ts", "src/**/*.ts", "src/**/__tests__/**/*.ts"],
 	"exclude": ["node_modules"]
 }

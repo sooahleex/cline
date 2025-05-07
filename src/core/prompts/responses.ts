@@ -3,6 +3,7 @@ import * as diff from "diff"
 import * as path from "path"
 import { ClineIgnoreController, LOCK_TEXT_SYMBOL } from "../ignore/ClineIgnoreController"
 import { McpToolCallResponse } from "../../shared/mcp"
+import "../../utils/path"  // Import path utility to add toPosix method to String prototype
 
 export const formatResponse = {
 	duplicateFileReadNotice: () =>

@@ -1413,8 +1413,8 @@ export class Task {
 				this.conversationHistoryDeletedRange = this.contextManager.getNextTruncationRange(
 					this.apiConversationHistory,
 					this.conversationHistoryDeletedRange,
-					// "quarter", // Force aggressive truncation
-					maxAllowedSize
+					"quarter", // Force aggressive truncation
+					// maxAllowedSize,
 				)
 				await this.saveClineMessagesAndUpdateHistory()
 
@@ -1425,8 +1425,8 @@ export class Task {
 					this.conversationHistoryDeletedRange = this.contextManager.getNextTruncationRange(
 						this.apiConversationHistory,
 						this.conversationHistoryDeletedRange,
-						// "quarter", // Force aggressive truncation
-						maxAllowedSize,
+						"quarter", // Force aggressive truncation
+						// maxAllowedSize,
 					)
 					await this.saveClineMessagesAndUpdateHistory()
 				}
