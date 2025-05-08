@@ -29,6 +29,31 @@
 				"IS_TEST": "true",
 				"DEV_WORKSPACE_FOLDER": "${workspaceFolder}"
 			}
+		},
+		{
+			"name": "Debug Single Mocha Test",
+			"type": "pwa-node",
+			"request": "launch",
+			"program": "${workspaceFolder}/node_modules/mocha/bin/_mocha",
+			"args": [
+				"--timeout",
+				"999999",
+				"--colors",
+				"--require",
+				"ts-node/register",
+				"--require",
+				"module-alias/register",
+				"${workspaceFolder}/src/core/context/context-management/__tests__/truncator.spec.ts"
+			],
+			"cwd": "${workspaceFolder}",
+			"protocol": "inspector",
+			"console": "integratedTerminal",
+			"internalConsoleOptions": "openOnSessionStart",
+			"skipFiles": ["<node_internals>/**"],
+			"env": {
+				"TS_NODE_PROJECT": "${workspaceFolder}/tsconfig.unit-test.json",
+				"NODE_PATH": "${workspaceFolder}"
+			}
 		}
 	]
 }

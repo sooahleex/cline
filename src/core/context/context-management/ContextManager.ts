@@ -163,7 +163,6 @@ export class ContextManager {
 							apiConversationHistory,
 							conversationHistoryDeletedRange,
 							keep,
-							// maxAllowedSize,
 						)
 
 						updatedConversationHistoryDeletedRange = true
@@ -239,39 +238,43 @@ export class ContextManager {
 		apiMessages: Anthropic.Messages.MessageParam[],
 		currentDeletedRange: [number, number] | undefined,
 		maxAllowedTokens: number,
-	): [number, number] {
-		// We always keep the first user-assistant pairing, and truncate an even number of messages from there
+		): [number, number] {
 		const totalMessages = apiMessages.length;
 		const tokenCounts = apiMessages.map(m => this.countTokens(m));
-
-		// 1) 뒤에서부터 누적하면서 maxAllowedTokens를 초과하지 않는 범위의 시작 인덱스를 찾는다.
+		
+		// 1) 뒤에서부터 누적하면서 maxAllowedTokens를 넘지 않는 가장 앞 인덱스 계산
 		let accumulated = 0;
-		let windowStart = totalMessages; // 유지할 구간의 시작 인덱스
+		let windowStart = totalMessages;       // 유지할 구간의 시작 인덱스
 		for (let i = totalMessages - 1; i >= 0; i--) {
-			if (accumulated + tokenCounts[i] > maxAllowedTokens) {
-				break;
-			}
+			if (accumulated + tokenCounts[i] > maxAllowedTokens) break;
 			accumulated += tokenCounts[i];
 			windowStart = i;
 		}
-
-		// 2) 항상 첫번째 user-assistant 쌍을 유지하고, 그 이후의 메시지에서 짝수 개의 메시지를 제거한다.
-		const prevDeleteEnd = currentDeletedRange ? currentDeletedRange[1] : -1;
-		const deleteStart = prevDeleteEnd + 1; // 삭제할 메시지의 시작 인덱스
-  		
-		// 3) windowStart 바로 앞까지(deleteStart…windowStart-1) 삭제
-  		//    단, deleteStart > windowStart-1 이면 삭제할 게 없음
-		let deleteEnd = Math.max(windowStart - 1, deleteStart - 1);
 		
-		// Make sure that the last message being removed is a assistant message, so the next message after the initial user-assistant pair is an assistant message. This preserves the user-assistant-user-assistant structure.
-		// NOTE: anthropic format messages are always user-assistant-user-assistant, while openai format messages can have multiple user messages in a row (we use anthropic format throughout cline)
-		if (apiMessages[deleteEnd].role !== "assistant") {
-			deleteEnd -= 1
-		}
+		// 2) 항상 첫번째 user-assistant 쌍(0~1) 유지
+		const prevDeleteEnd = currentDeletedRange ? currentDeletedRange[1] : 1;
+		const deleteStart = Math.max(prevDeleteEnd + 1, 2); // 최소 2 이상
 
-		// this is an inclusive range that will be removed from the conversation history
-		return [deleteStart, deleteEnd]
-	}
+		// 3) 기본 deleteEnd
+		let deleteEnd = windowStart - 1;
+		
+		// 4) edge case: deleteStart > deleteEnd → 삭제 없음 처리
+		if (deleteStart > deleteEnd) {
+			return [deleteStart, deleteStart - 1];
+		}
+		
+		// 5) 마지막으로 삭제되는 메시지가 assistant인지 확인
+		if (apiMessages[deleteEnd].role !== "assistant") {
+			deleteEnd -= 1;
+		}
+		
+		// 6) deleteStart > deleteEnd 재검증 (assistant 조정 후)
+		if (deleteStart > deleteEnd) {
+			return [deleteStart, deleteStart - 1];
+		}
+		
+		return [deleteStart, deleteEnd];
+		} 
 
 	private countTokens(msg: Anthropic.Messages.MessageParam): number {
 		let text: string;

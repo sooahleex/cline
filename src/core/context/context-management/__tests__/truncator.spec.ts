@@ -1,49 +1,108 @@
+// File: src/core/context/context-management/__tests__/truncator.spec.ts
 import 'module-alias/register';
-import { ContextManager } from "../ContextManager"
-import { Anthropic } from "@anthropic-ai/sdk"
-import { expect } from "chai"
+import { expect } from 'chai';
+import { ContextManager } from '../ContextManager';
+import { Anthropic } from '@anthropic-ai/sdk';
 
-// 더미 메시지 생성 유틸
-function makeMessages(count: number): Anthropic.Messages.MessageParam[] {
+type Msg = Anthropic.Messages.MessageParam;
+
+/**
+ * Helper to generate a sequence of messages.
+ * Each message content is repeated 'x ' tokens to simulate token count.
+ */
+function makeMsgs(count: number, tokensPerMsg = 1): Msg[] {
   return Array.from({ length: count }, (_, i) => ({
-    role: i % 2 === 0 ? "user" : "assistant",
-    content: `msg${i}`,  // 토큰 길이 테스트용
+    role: i % 2 === 0 ? 'user' : 'assistant',
+    content: 'x '.repeat(tokensPerMsg).trim(),
   }));
 }
 
-describe("ContextManager.getNextTruncationRange", () => {
-  let ctxMgr: ContextManager;
+describe('ContextManager.getNextTruncationRangeSliding)', () => {
+  let ctx: ContextManager;
 
   beforeEach(() => {
-    ctxMgr = new ContextManager();
+    ctx = new ContextManager();
   });
 
-  it("예산(maxTokens)보다 전체 토큰이 적으면 삭제 구간 없음", () => {
-    const msgs = makeMessages(2);    // 토큰 합도 2
-    // currentDeletedRange: undefined, maxAllowedTokens: 10
-    const [start, end] = ctxMgr.getNextTruncationRangeSliding(msgs, undefined, 10);
-    expect(start).to.equal(2);
-    expect(end).to.equal(1);         // start > end 이면 "삭제 없음"
+  it('should return no deletion for empty message array', () => {
+    const [s, e] = ctx.getNextTruncationRangeSliding([], undefined, 10);
+    expect(s).to.equal(2);
+    expect(e).to.equal(1);
   });
 
-  it("이미 삭제된 범위가 있을 때, 그 다음 인덱스부터 삭제가 시작됨", () => {
-    const msgs = makeMessages(6);
-    // 예) 이전에 2~3번 인덱스를 삭제했다고 치고
-    const prevRange: [number, number] = [2, 3];
-    // 토큰 예산을 매우 작게 잡아서 추가 삭제 유도
-    const [start, end] = ctxMgr.getNextTruncationRangeSliding(msgs, prevRange, 1);
-    expect(start).to.equal(4);       // prevRange[1] + 1
-    // end는 start-1 이상(혹은 start) 이면 OK
-    expect(end).to.be.at.least(start - 1);
+  it('should return no deletion for 1 or 2 messages', () => {
+    [1, 2].forEach(n => {
+      const [s, e] = ctx.getNextTruncationRangeSliding(makeMsgs(n), undefined, 10);
+      expect(s).to.equal(2);
+      expect(e).to.equal(1);
+    });
   });
 
-  it("슬라이딩 윈도우로 토큰 예산에 맞춰 뒤쪽 메시지를 유지", () => {
-    // 5개의 메시지를 만들고, 각 content 길이는 4토큰이라고 가정
-    const msgs = makeMessages(5).map(m => ({ ...m, content: "a b c d" }));
-    // maxAllowedTokens = 8 → 뒤에서 두 개(총 8토큰)만 유지
-    const [start, end] = ctxMgr.getNextTruncationRangeSliding(msgs, undefined, 8);
-    // deleteStart = 2, deleteEnd = windowStart-1 = 3 → [2,3] 이 잘 나와야 함
-    expect(start).to.equal(2);
-    expect(end).to.equal(3);
+  it('should return no deletion when total tokens ≤ maxAllowedTokens', () => {
+    const msgs = makeMsgs(3, 2); // total tokens = 6
+    const [s, e] = ctx.getNextTruncationRangeSliding(msgs, undefined, 10);
+    expect(s).to.equal(2);
+    expect(e).to.equal(1);
+  });
+
+  it('should return no deletion when maxAllowedTokens = 0', () => {
+    const msgs = makeMsgs(5, 1);
+    const [s, e] = ctx.getNextTruncationRangeSliding(msgs, undefined, 0);
+    expect(s).to.equal(2);
+    expect(e).to.equal(1);
+  });
+
+  it('should remove range correctly when budget < single message token count', () => {
+    const msgs = makeMsgs(5, 5); // each message = 5 tokens
+    // budget 3 < 5 → cannot keep any, windowStart remains at end
+    const [s, e] = ctx.getNextTruncationRangeSliding(msgs, undefined, 3);
+    // deleteStart = 2, deleteEnd should adjust to assistant at index 3
+    expect(s).to.equal(2);
+    expect(e).to.equal(3);
+  });
+
+  it('should preserve first pair and start deletion after previous range', () => {
+    const msgs = makeMsgs(6, 1);
+    const prev: [number, number] = [2, 4];
+    // small budget to force deletion
+    const [s, e] = ctx.getNextTruncationRangeSliding(msgs, prev, 1);
+    expect(s).to.equal(5);
+    expect(e).to.be.at.least(s - 1);
+  });
+
+  it('should ensure deleteEnd lands on an assistant message', () => {
+    // Construct roles: user(0), assistant(1), user(2), assistant(3), user(4)
+    const msgs: Msg[] = [
+      { role: 'user', content: 'a' },
+      { role: 'assistant', content: 'b' },
+      { role: 'user', content: 'c' },
+      { role: 'assistant', content: 'd' },
+      { role: 'user', content: 'e' },
+    ];
+    // budget small so windowStart at end, deleteEnd initially = 4(user) → adjust to 3
+    const [s, e] = ctx.getNextTruncationRangeSliding(msgs, undefined, 1);
+    expect(s).to.equal(2);
+    expect(e).to.equal(3);
+  });
+
+  it('should handle currentDeletedRange covering to the end (no further deletion)', () => {
+    const msgs = makeMsgs(4, 1);
+    const prev: [number, number] = [2, 3]; // already deleted up to last index
+    const [s, e] = ctx.getNextTruncationRangeSliding(msgs, prev, 10);
+    expect(s).to.equal(4);
+    expect(e).to.equal(3);
+  });
+
+  it('should expand deletion range correctly across repeated calls', () => {
+    const msgs = makeMsgs(8, 1);
+    // 1st call: budget 2 → only keep last 2 tokens → windowStart=6 → delete [2..5]
+    let [s1, e1] = ctx.getNextTruncationRangeSliding(msgs, undefined, 2);
+    expect(s1).to.equal(2);
+    expect(e1).to.equal(5);
+
+    // 2nd call: prevRange=[2,5], same budget → deleteStart=6, windowStart remains 6 → no deletion
+    let [s2, e2] = ctx.getNextTruncationRangeSliding(msgs, [s1, e1], 2);
+    expect(s2).to.equal(6);
+    expect(e2).to.equal(5);
   });
 });
