@@ -4,6 +4,7 @@ import { withRetry } from "../retry"
 import { anthropicDefaultModelId, AnthropicModelId, anthropicModels, ApiHandlerOptions, ModelInfo } from "../../shared/api"
 import { ApiHandler } from "../index"
 import { ApiStream } from "../transform/stream"
+import { PROMPTS } from "../transform/openai-format"
 
 export class AnthropicHandler implements ApiHandler {
 	private options: ApiHandlerOptions
@@ -25,6 +26,14 @@ export class AnthropicHandler implements ApiHandler {
 
 		const budget_tokens = this.options.thinkingBudgetTokens || 0
 		const reasoningOn = modelId.includes("3-7") && budget_tokens !== 0 ? true : false
+
+		// Add PLANNING prompt after the first user message
+		if (messages.length > 0 && messages[0].role === "user") {
+			messages.splice(1, 0, {
+				role: "user",
+				content: PROMPTS.PLANNING,
+			})
+		}
 
 		switch (modelId) {
 			// 'latest' alias does not support cache_control
