@@ -1,6 +1,22 @@
 import { Anthropic } from "@anthropic-ai/sdk"
 import OpenAI from "openai"
 
+export const PROMPTS = {
+	PLANNING: `**Step 1:** Produce your \`assistantMessage\` using the following tags in order:
+1. \`<thinking>…</thinking>\`  
+2. \`<execute_command>…</execute_command>\`  
+3. \`<write_to_file>…</write_to_file>\`  
+4. \`<attempt_completion>…</attempt_completion>\`
+
+**Step 2:**  
+Based on the **exact tag contents** you just generated, group them into logical, sequential phases. Each phase should:
+1. Contain related steps or file-write actions that can be completed together  
+2. Follow a natural development order  
+3. Have a clear completion point  
+
+Return first the full \`assistantMessage\`, then **only** a numbered list of phases, each with its associated tag lines.`,
+} as const;
+
 export function convertToOpenAiMessages(
 	anthropicMessages: Anthropic.Messages.MessageParam[],
 ): OpenAI.Chat.ChatCompletionMessageParam[] {
@@ -145,6 +161,14 @@ export function convertToOpenAiMessages(
 				})
 			}
 		}
+	}
+
+	// Add planning prompt only for the first message
+	if (openAiMessages.length > 0 && openAiMessages[0].role === "user") {
+		openAiMessages.splice(1, 0, {
+			role: "user",
+			content: PROMPTS.PLANNING
+		});
 	}
 
 	return openAiMessages
