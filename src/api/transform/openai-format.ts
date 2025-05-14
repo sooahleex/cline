@@ -2,19 +2,43 @@ import { Anthropic } from "@anthropic-ai/sdk"
 import OpenAI from "openai"
 
 export const PROMPTS = {
-	PLANNING: `**Step 1:** Produce your \`assistantMessage\` using the following tags in order:
-1. \`<thinking>…</thinking>\`  
-2. \`<execute_command>…</execute_command>\`  
-3. \`<write_to_file>…</write_to_file>\`  
-4. \`<attempt_completion>…</attempt_completion>\`
+	PLANNING: `**Step 1:** First, analyze the user's request and produce your \`assistantMessage\` using the following tags:
+1. \`<thinking>…</thinking>\` - Explain your overall approach and reasoning
+2. \`<execute_command>…</execute_command>\` - Any commands to be executed  
+3. \`<write_to_file>…</write_to_file>\` - File creation or modification actions
+4. \`<attempt_completion>…</attempt_completion>\` - Results or completion attempts
 
-**Step 2:**  
-Based on the **exact tag contents** you just generated, group them into logical, sequential phases. Each phase should:
-1. Contain related steps or file-write actions that can be completed together  
-2. Follow a natural development order  
-3. Have a clear completion point  
+**Step 2:** Organize your implementation into distinct phases. For each phase:
+1. Identify a clear, independent unit of work with a specific goal
+2. Include only related operations that should be completed together
+3. Ensure each phase has a clear starting and completion point
+4. Consider logical dependencies (e.g., files need to be created before used)
 
-Return first the full \`assistantMessage\`, then **only** a numbered list of phases, each with its associated tag lines.`,
+**Step 3:** Return your implementation in this format:
+1. First, the complete \`assistantMessage\` with all required tags
+2. Then, a numbered list of phases with the format:
+   \`\`\`
+   1. [Phase Name/Description]: 
+      - [Brief explanation of what this phase accomplishes]
+      - [List of associated tag operations in this phase]
+   \`\`\`
+
+For example:
+1. File Creation Phase: 
+   - Creating necessary source files and directories
+   - <write_to_file> for main.py, <write_to_file> for config.json
+   
+2. Database Setup Phase:
+   - Setting up database schema and initial data
+   - <write_to_file> for schema.sql, <execute_command> to initialize DB
+
+3. Application Logic Phase:
+   - Implementing core business logic and functions
+   - <write_to_file> for business_logic.py
+
+4. Testing and Execution Phase:
+   - Running tests and demonstrating functionality
+   - <execute_command> to run tests, <attempt_completion> with results`,
 } as const
 
 export function convertToOpenAiMessages(
