@@ -50,6 +50,8 @@ import {
 import { Task, cwd } from "../task"
 import { ClineRulesToggles } from "../../shared/cline-rules"
 import { createRuleFile, deleteRuleFile, refreshClineRulesToggles } from "../context/instructions/user-instructions/cline-rules"
+import { get } from "node:http"
+import p from "proxyquire"
 
 /*
 https://github.com/microsoft/vscode-webview-ui-toolkit-samples/blob/main/default/weather-webview/src/providers/WeatherViewProvider.ts
@@ -152,11 +154,57 @@ export class Controller {
 			autoApprovalSettings,
 			browserSettings,
 			chatSettings,
+			this,
+			this.outputChannel,
 			customInstructions,
 			task,
 			images,
 			historyItem,
 		)
+	}
+
+	public async runPhasesSequentially(
+		phases: string[],
+		originalPrompt: string,
+		outputChannel: vscode.OutputChannel
+	) {
+		outputChannel.appendLine("Starting ${phases.length} phases...");
+		for (let i=0; i<phases.length; i++) {
+			const phasePrompt = phases[i];
+			outputChannel.appendLine(`Running phase ${i+1}/${phases.length}: ${phasePrompt}`);
+			// create a brand-new Task instance for each phase
+			const { apiConfiguration, customInstructions, autoApprovalSettings, browserSettings, chatSettings } = await getAllExtensionState(this.context);
+			
+			const phaseTask = new Task(
+				this.context,
+				this.mcpHub,
+				this.workspaceTracker,
+				(history) => this.updateTaskHistory(history),
+				() => this.postStateToWebview(),
+				(message) => this.postMessageToWebview(message),
+				(taskId) => this.reinitExistingTaskFromId(taskId),
+				() => this.cancelTask(),
+				apiConfiguration,
+				autoApprovalSettings,
+				browserSettings,
+				chatSettings,
+				this, // pass controller so Task can callback to runPhasesSequentially if needed
+				this.outputChannel, // same outputChannel
+				customInstructions,
+				phasePrompt, // this is the task text for this phase
+				undefined, // no images for this phase
+				undefined, // no historyItem for this phase
+			);
+
+			// wait for this phase to fully complete before moving on
+			// (our patched Task.startTask will return only after the phase's loop has ended)
+			await pWaitFor(() => phaseTask.didFinishAbortingStream || phaseTask.abandoned === false, {
+				timeout: 3_000,
+				interval: 1000,
+			});
+			outputChannel.appendLine(`Phase ${i+1} completed.`);
+		}
+		outputChannel.appendLine("All phases completed.");
 	}
 
 	async reinitExistingTaskFromId(taskId: string) {

@@ -65,76 +65,337 @@ export interface ToolUse {
 
 export type PhaseStatus = "pending" | "approved"
 
-export interface Phase {
-	index: number // 1부터 시작하는 Phase 번호
-	thinking: string // <thinking>…</thinking> 콘텐츠
-	paths: string[] // 이 Phase에서 다룰 파일 경로들
-	status: PhaseStatus // 'pending' 또는 'approved'
+export interface Subtask {
+    description: string;
+    type: string; // 'execute_command', 'write_to_file', etc.
+    completed: boolean;
 }
 
-const TAG_REGEX = /<(thinking|path)>([\s\S]*?)<\/\1>/g
+export interface Phase {
+    index: number;
+    // thinking field removed as per suggestion
+    paths: string[];
+    status: PhaseStatus;
+    phase_prompt: string;
+    subtasks: Subtask[];
+}
 
 export function parsePhases(raw: string): Phase[] {
-	const phases: Phase[] = []
-	let current: Phase | null = null
-	let match: RegExpExecArray | null
+    // First look for a Phase List section
+    const phaseListSectionRegex = /(?:#{1,3}\s*)?Phase List(?:[\s\n]*)([\s\S]*?)(?=#{1,3}|$)/i;
+    const phaseListMatch = raw.match(phaseListSectionRegex);
+    
+    if (phaseListMatch && phaseListMatch[1]) {
+        // Extract phases from the Phase List section
+        const phaseListContent = phaseListMatch[1].trim();
+        const phaseItemRegex = /(\d+)[.:]\s*(.*?)(?::\s*|-\s*|\n+)((?:[-*].*?\n)*?)(?=\n*\s*\d+[.:]|\n*$)/gsi;
+        const phaseMatches: { index: number; description: string; details: string }[] = [];
+        let match;
+        
+        while ((match = phaseItemRegex.exec(phaseListContent)) !== null) {
+            const index = parseInt(match[1], 10);
+            const description = match[2].trim();
+            const details = match[3]?.trim() || "";
+            phaseMatches.push({ index, description, details });
+        }
+        
+        if (phaseMatches.length > 0) {
+            return createPhasesFromMatches(phaseMatches, raw);
+        }
+    }
+    
+    // Fall back to looking for explicit phase descriptions in the whole text
+    const phaseListRegex = /(\d+)[.:]\s*(.*?(?:Phase|Creation|Setup|Implementation|Logic|Batch|Completion|단계).*?)(?:\s*:\s*|-\s*|\n+)((?:[-*].*?\n)*?)(?=\n*\s*\d+[.:]|\n*$)/gsi;
+    const phaseMatches: { index: number; description: string; details: string }[] = [];
+    let match;
 
-	while ((match = TAG_REGEX.exec(raw)) !== null) {
-		const [, tag, content] = match
-		const text = content.trim()
+    while ((match = phaseListRegex.exec(raw)) !== null) {
+        const index = parseInt(match[1], 10);
+        const description = match[2].trim();
+        const details = match[3]?.trim() || "";
+        phaseMatches.push({ index, description, details });
+    }
 
-		if (tag === "thinking") {
-			current = {
-				index: phases.length + 1,
-				thinking: text,
-				paths: [],
-				status: "pending",
-			}
-			phases.push(current)
-		} else if (tag === "path" && current) {
-			current.paths.push(text)
-		}
-	}
+    // If we found explicit phases in a numbered list format
+    if (phaseMatches.length > 0) {
+        return createPhasesFromMatches(phaseMatches, raw);
+    }
 
-	return phases
+    // If we still haven't found any phases, look for actual Phase headings
+    const phaseHeadingRegex = /#{1,3}\s*Phase\s+\d+:?\s*(.*?)(?=\n)/gi;
+    const phaseHeadings: { index: number; description: string }[] = [];
+    let phaseIndex = 1;
+    
+    // Reset the lastIndex property to start the search from the beginning
+    phaseHeadingRegex.lastIndex = 0;
+    
+    while ((match = phaseHeadingRegex.exec(raw)) !== null) {
+        const description = match[1].trim();
+        phaseHeadings.push({ index: phaseIndex++, description });
+    }
+    
+    if (phaseHeadings.length > 0) {
+        // Convert phase headings to matches
+        const headingMatches = phaseHeadings.map(heading => {
+            // Try to extract content between this heading and the next
+            const headingText = `Phase ${heading.index}: ${heading.description}`;
+            const headingPos = raw.indexOf(headingText);
+            const nextHeadingPos = raw.indexOf(`Phase ${heading.index + 1}:`, headingPos);
+            const phaseContent = nextHeadingPos > 0 ? 
+                raw.substring(headingPos + headingText.length, nextHeadingPos) : 
+                raw.substring(headingPos + headingText.length);
+            
+            return {
+                index: heading.index,
+                description: heading.description,
+                details: phaseContent.trim()
+            };
+        });
+        
+        return createPhasesFromMatches(headingMatches, raw);
+    }
+
+    // Fallback to improved standard extraction
+    return extractStandardPhases(raw);
 }
 
-/**
- * 어시스턴트 메시지에서 <thinking> 블록과 <path> 태그 내용을 추출합니다.
- */
-export interface ThoughtWithPaths {
-	thinking: string
-	paths: string[]
+// Helper function to create phases from matches
+function createPhasesFromMatches(
+    phaseMatches: { index: number; description: string; details: string }[], 
+    raw: string
+): Phase[] {
+    // Create phases from the numbered list descriptions
+    const phases: Phase[] = phaseMatches.map(phaseMatch => ({
+        index: phaseMatch.index,
+        paths: [],    // Will be filled in later
+        status: "pending",
+        phase_prompt: phaseMatch.description,
+        subtasks: extractSubtasksFromDetails(phaseMatch.details)
+    }));
+
+    // Extract tool uses to associate with phases and subtasks
+    const toolUseRegex = /<(write_to_file|execute_command|attempt_completion)>([\s\S]*?)<\/\1>/g;
+    const toolUses: {type: string, content: string, index: number}[] = [];
+    let match;
+    
+    while ((match = toolUseRegex.exec(raw)) !== null) {
+        const toolType = match[1];
+        const content = match[2].trim();
+        // Find which phase this tool use most likely belongs to
+        const phaseIndex = findPhaseForToolUse(match.index, raw, phases);
+        toolUses.push({type: toolType, content, index: phaseIndex || 0});
+    }
+    
+    // Associate tool uses with phases based on position in the text
+    toolUses.forEach(toolUse => {
+        if (toolUse.index > 0 && toolUse.index <= phases.length) {
+            const phase = phases[toolUse.index - 1];
+            // Add a subtask for this tool use if not already present
+            const hasMatchingSubtask = phase.subtasks.some(subtask => 
+                subtask.type === toolUse.type || 
+                subtask.description.toLowerCase().includes(toolUse.type)
+            );
+            
+            if (!hasMatchingSubtask) {
+                phase.subtasks.push({
+                    description: `Perform ${toolUse.type} operation`,
+                    type: toolUse.type,
+                    completed: false
+                });
+            }
+        }
+    });
+
+    // Extract all file paths
+    const pathBlocks: string[] = [];
+    const pathRegex = /<path>([\s\S]*?)<\/path>/g;
+    
+    while ((match = pathRegex.exec(raw)) !== null) {
+        pathBlocks.push(match[1].trim());
+    }
+
+    // Distribute paths to phases based on their descriptions and subtasks
+    for (const phase of phases) {
+        const description = phase.phase_prompt.toLowerCase();
+        
+        // Intelligently match paths to phases
+        for (const path of pathBlocks) {
+            const filename = path.split(/[\/\\]/).pop() || "";
+            const extension = filename.split(".").pop()?.toLowerCase() || "";
+            
+            // Improved path matching logic
+            if (
+                // Match by phase description
+                (description.includes("directory") || description.includes("creation") || description.includes("setup") || description.includes("project")) ||
+                (description.includes("database") && (extension === "db" || extension === "sql" || filename.includes("database"))) ||
+                (description.includes("application") || description.includes("implementation") || description.includes("logic")) && 
+                ((extension === "py" || extension === "js") || filename.includes("app")) ||
+                (description.includes("batch") && extension === "bat") ||
+                // Match by subtask mentions
+                phase.subtasks.some(subtask => 
+                    subtask.description.toLowerCase().includes(filename.toLowerCase()))
+            ) {
+                phase.paths.push(path);
+            }
+        }
+    }
+
+    return phases;
 }
-/**
- * 어시스턴트 메시지 문자열에서 <thinking> 태그와 <path> 태그 내용을 추출합니다.
- */
-export function extractThinkingWithPaths(assistantMessage: string): ThoughtWithPaths[] {
-	// thinking 또는 path 둘 다 한 번에 잡아내는 정규식
-	const tagRegex = /<(thinking|path)>([\s\S]*?)<\/\1>/g
 
-	const result: ThoughtWithPaths[] = []
-	let current: ThoughtWithPaths | null = null
-	let match: RegExpExecArray | null
-
-	while ((match = tagRegex.exec(assistantMessage)) !== null) {
-		const tag = match[1] // 'thinking' 또는 'path'
-		const content = match[2].trim()
-
-		if (tag === "thinking") {
-			// 새로운 thinking 등장 → 그룹 시작
-			current = { thinking: content, paths: [] }
-			result.push(current)
-		} else if (tag === "path") {
-			// path는 마지막 thinking 그룹에 추가
-			if (current) {
-				current.paths.push(content)
-			}
-			// 만약 current가 null이면, 첫 thinking 이전에 path가 있었단 의미이므로 무시하거나 별도로 처리 가능
-		}
-	}
-
-	return result
+// Helper function to find which phase a tool use belongs to
+function findPhaseForToolUse(position: number, raw: string, phases: Phase[]): number | null {
+    const precedingText = raw.substring(0, position);
+    
+    // Try to find the most recent phase heading or number before this position
+    for (let i = phases.length - 1; i >= 0; i--) {
+        const phase = phases[i];
+        const phaseMarker = `${phase.index}. ${phase.phase_prompt}`;
+        const phaseHeading = `Phase ${phase.index}: ${phase.phase_prompt}`;
+        
+        if (precedingText.includes(phaseMarker) || precedingText.includes(phaseHeading)) {
+            return phase.index;
+        }
+    }
+    
+    // If no specific phase found, default to the first phase
+    return phases.length > 0 ? 1 : null;
 }
 
+// Helper function to extract subtasks from phase details
+function extractSubtasksFromDetails(details: string): Subtask[] {
+    const subtasks: Subtask[] = [];
+    
+    // Look for line items that could be subtasks (starting with - or *)
+    const subtaskRegex = /[-*]\s*(.*?)(?:\s*\n|$)/g;
+    let match;
+    
+    while ((match = subtaskRegex.exec(details)) !== null) {
+        const description = match[1].trim();
+        
+        // Determine type based on subtask description
+        let type = "generic";
+        if (description.includes("<write_to_file>") || description.includes("file")) {
+            type = "write_to_file";
+        } else if (description.includes("<execute_command>") || description.includes("command")) {
+            type = "execute_command";
+        } else if (description.includes("<attempt_completion>") || description.includes("result")) {
+            type = "attempt_completion";
+        }
+        
+        subtasks.push({
+            description,
+            type,
+            completed: false
+        });
+    }
+    
+    return subtasks;
+}
+
+// The improved standard extraction logic
+function extractStandardPhases(raw: string): Phase[] {
+    const phases: Phase[] = [];
+    
+    // Look for heading-like text that might indicate phases
+    const potentialPhaseHeadings = raw.match(/#{1,3}.*?(?:Phase|Step|Stage).*?\n/gi) || [];
+    
+    if (potentialPhaseHeadings.length > 0) {
+        // Extract phases from headings
+        let phaseIndex = 1;
+        
+        for (const heading of potentialPhaseHeadings) {
+            const cleanHeading = heading.replace(/^#{1,3}\s*/, '').trim();
+            
+            // Find the content between this heading and the next heading
+            const headingPos = raw.indexOf(heading);
+            const nextHeadingPos = raw.indexOf('#', headingPos + heading.length);
+            const phaseContent = nextHeadingPos > 0 ? 
+                raw.substring(headingPos + heading.length, nextHeadingPos).trim() :
+                raw.substring(headingPos + heading.length).trim();
+            
+            phases.push({
+                index: phaseIndex++,
+                paths: [],
+                status: "pending",
+                phase_prompt: cleanHeading,
+                subtasks: extractSubtasksFromDetails(phaseContent)
+            });
+        }
+        
+        // Extract paths and associate with phases
+        const pathRegex = /<path>([\s\S]*?)<\/path>/g;
+        let match;
+        const paths: string[] = [];
+        
+        while ((match = pathRegex.exec(raw)) !== null) {
+            paths.push(match[1].trim());
+        }
+        
+        // Distribute paths to most relevant phases
+        distributePaths(phases, paths);
+        
+        return phases;
+    }
+    
+    // If no headings found, create a single phase
+    return [{
+        index: 1,
+        paths: extractAllPaths(raw),
+        status: "pending",
+        phase_prompt: "Implementation Phase",
+        subtasks: []
+    }];
+}
+
+// Helper to extract all paths
+function extractAllPaths(raw: string): string[] {
+    const pathRegex = /<path>([\s\S]*?)<\/path>/g;
+    const paths: string[] = [];
+    let match;
+    
+    while ((match = pathRegex.exec(raw)) !== null) {
+        paths.push(match[1].trim());
+    }
+    
+    return paths;
+}
+
+// Helper to distribute paths to phases based on content similarity
+function distributePaths(phases: Phase[], paths: string[]): void {
+    // For each path, find the most relevant phase
+    for (const path of paths) {
+        const filename = path.split(/[\/\\]/).pop() || "";
+        let bestPhase = phases[0];
+        let bestScore = 0;
+        
+        for (const phase of phases) {
+            // Calculate relevance score based on keyword matches
+            const phaseText = phase.phase_prompt.toLowerCase();
+            const filenameLower = filename.toLowerCase();
+            const extension = filename.split('.').pop()?.toLowerCase() || "";
+            
+            let score = 0;
+            
+            // Score matches in phase name
+            if (
+                (phaseText.includes("setup") && filenameLower.includes("config")) ||
+                (phaseText.includes("database") && (extension === "db" || extension === "sql")) ||
+                (phaseText.includes("gui") && (extension === "py" || extension === "js")) ||
+                (phaseText.includes("launcher") && (extension === "bat" || extension === "sh"))
+            ) {
+                score += 10;
+            }
+            
+            // If this phase has the highest score, make it the best match
+            if (score > bestScore) {
+                bestScore = score;
+                bestPhase = phase;
+            }
+        }
+        
+        // Add path to the most relevant phase
+        bestPhase.paths.push(path);
+    }
+}
 export { PhaseTracker } from "./phase-tracker"
