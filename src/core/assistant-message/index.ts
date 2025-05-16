@@ -398,4 +398,24 @@ function distributePaths(phases: Phase[], paths: string[]): void {
         bestPhase.paths.push(path);
     }
 }
+
+export function parsePlanFromOutput(raw: string): Phase[] {
+    const phases = parsePhases(raw);
+    if (phases.length) {return phases};
+
+    const regex = /^\s*(\d+)[.)-]\s+(.*)$/gm;
+    const found: Phase[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = regex.exec(raw)) !== null) {
+        found.push({
+            index: Number(m[1]),
+            paths: [],
+            status: "pending",
+            phase_prompt: m[2].trim(),
+            subtasks: []
+        });
+    }
+  return found;
+}
+
 export { PhaseTracker } from "./phase-tracker"

@@ -90,7 +90,9 @@ import { parseSlashCommands } from ".././slash-commands"
 import WorkspaceTracker from "../../integrations/workspace/WorkspaceTracker"
 import { McpHub } from "../../services/mcp/McpHub"
 import { PhaseTracker } from "../assistant-message"
-import { Controller } from '../controller'; // Controller 타입의 실제 경로로 수정해야 합니다.
+import { Controller } from '../controller';
+import { Phase, Subtask, parsePlanFromOutput } from "../assistant-message/index"
+import { parse } from "node:path"
 
 
 export const cwd =
@@ -147,6 +149,10 @@ export class Task {
 	private fileContextTracker: FileContextTracker
 	private modelContextTracker: ModelContextTracker
 
+	// phase tracking
+	private phaseTracker?: PhaseTracker
+	private isPhaseRoot: boolean = false
+
 	// streaming
 	isWaitingForFirstChunk = false
 	isStreaming = false
@@ -176,6 +182,8 @@ export class Task {
 		chatSettings: ChatSettings,
         sidebarController: Controller,
         outputChannel: vscode.OutputChannel,
+		phaseTracker?: PhaseTracker,
+		isPhaseRoot: boolean = false,
 		customInstructions?: string,
 		task?: string,
 		images?: string[],
@@ -191,6 +199,8 @@ export class Task {
 		this.cancelTask = cancelTask
         this.sidebarController = sidebarController
         this.outputChannel = outputChannel
+		this.phaseTracker = phaseTracker
+		this.isPhaseRoot = isPhaseRoot
 		this.clineIgnoreController = new ClineIgnoreController(cwd)
 		this.clineIgnoreController.initialize().catch((error) => {
 			console.error("Failed to initialize ClineIgnoreController:", error)
@@ -849,27 +859,57 @@ export class Task {
 
 	// Task lifecycle
 	private async startTask(task?: string, images?: string[]): Promise<void> {
-		// conversationHistory (for API) and clineMessages (for webview) need to be in sync
-		// if the extension process were killed, then on restart the clineMessages might not be empty, so we need to set it to [] when we create a new Cline client (otherwise webview would show stale messages from previous session)
-		this.clineMessages = []
-		this.apiConversationHistory = []
+	/* 0. 초기화 ----------------------------------------------------------- */
+		this.clineMessages = [];
+		this.apiConversationHistory = [];
+		await this.postStateToWebview();
 
-		await this.postStateToWebview()
+		/* 1. Phase-별 프롬프트 계산 ------------------------------------------ */
+		let phaseAwarePrompt: string;
 
-		await this.say("text", task, images)
+		if (this.phaseTracker) {
+			const phase = this.phaseTracker.currentPhase;
+			phaseAwarePrompt = this.isPhaseRoot
+			? (task ?? "")
+			: this.buildPhasePrompt(
+				phase,
+				this.phaseTracker.totalPhases,
+				this.phaseTracker.getOriginalPrompt(),
+				);
+		} else {
+			phaseAwarePrompt = task ?? "";
+		}
 
-		this.isInitialized = true
+		await this.say("text", phaseAwarePrompt, images);
+		this.isInitialized = true;
 
-		let imageBlocks: Anthropic.ImageBlockParam[] = formatResponse.imageBlocks(images)
-		await this.initiateTaskLoop([
-			{
-				type: "text",
-				text: `<task>\n${task}\n</task>`,
-			},
-			...imageBlocks,
-		])
-	}
-	
+		const userBlocks: UserContent = [
+			{ type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>` },
+			...formatResponse.imageBlocks(images),
+		];
+
+		/* 2-A. ***계획 Phase(Phase-1)*** : 한 턴 돌리고 종료 ------------------- */
+		if (this.isPhaseRoot) {
+			const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(
+			userBlocks,
+			);
+
+			if (this.phaseTracker) {
+			const planSteps = parsePlanFromOutput(firstAssistantMessage);
+			this.phaseTracker.addPhasesFromPlan(planSteps);
+			this.phaseTracker.markCurrentPhaseComplete();
+			}
+
+			// 컨트롤러에 ‘이 Phase 끝!’ 알림
+			this.sidebarController.onTaskCompleted(this, firstAssistantMessage);
+			return;                             // ← 루트-Phase Task 종료
+		}
+
+		/* 2-B. 실행 Phase(2,3,…) : 기존 loop 사용 ---------------------------- */
+		await this.initiateTaskLoop(userBlocks);
+		}
+
+
 // 	private async startTask(task?: string, images?: string[]): Promise<void> {
 // 		// conversationHistory (for API) and clineMessages (for webview) need to be in sync
 // 		// if the extension process were killed, then on restart the clineMessages might not be empty, so we need to set it to [] when we create a new Cline client (otherwise webview would show stale messages from previous session)
@@ -3214,9 +3254,17 @@ export class Task {
 								}
 
 								// we already sent completion_result says, an empty string asks relinquishes control over button and field
+								let phaseFinished = false;
 								const { response, text, images } = await this.ask("completion_result", "", false)
 								if (response === "yesButtonClicked") {
+									phaseFinished = true;
 									pushToolResult("") // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
+									if (phaseFinished && this.phaseTracker) {
+										this.phaseTracker.markCurrentPhaseComplete();
+										this.sidebarController.onTaskCompleted?.(this, result ?? "");
+
+										return;
+									}
 									break
 								}
 								await this.say("user_feedback", text ?? "", images)
@@ -3419,7 +3467,7 @@ export class Task {
 		return { assistantMessage, reasoningMessage, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens, totalCost };
 	}
 
-private async executeToolUse(toolName: ToolUseName, params: Record<string, any>): Promise<ToolResponse | undefined | void> {
+	private async executeToolUse(toolName: ToolUseName, params: Record<string, any>): Promise<ToolResponse | undefined | void> {
         console.log(`Task.executeToolUse called with toolName: ${toolName}, params:`, params);
         switch (toolName) {
             case "write_to_file":
@@ -3475,119 +3523,115 @@ private async executeToolUse(toolName: ToolUseName, params: Record<string, any>)
         }
     }
 
+	public getPhaseTracker(): PhaseTracker | undefined {
+		return this.phaseTracker;
+	}
+
+	public canSpawnSubtasks(): boolean {
+	return this.isPhaseRoot;
+	}
+
+	/**
+	 * Build the system / user prompt that will be fed to the LLM for one *execution*
+	 * phase ( i.e. **after** the planning phase has produced the full roadmap ).
+	 *
+	 * @param phase          The Phase record returned by PhaseTracker.currentPhase
+	 * @param total          Total number of phases in the roadmap
+	 * @param originalPrompt The very first user request – shown verbatim for context
+	 */
+	private buildPhasePrompt(
+		phase: Phase,
+		total: number,
+		originalPrompt: string
+	): string {
+		// Helper: pretty-print the path list (can be empty)
+		const pathsSection =
+			phase.paths.length > 0
+			? phase.paths.join("\n")
+			: "(no specific files yet)";
+
+		// Helper: numbered sub-tasks (guaranteed at least one – but be defensive)
+		const subtasksSection = phase.subtasks.length
+			? phase.subtasks
+				.map(
+				(st: Subtask, i: number) =>
+					`${i + 1}. ${st.description.trim()}`
+				)
+				.join("\n")
+			: "1. (no explicit sub-tasks – use your best judgement)";
+
+		// Final prompt -------------------------------------------------------------
+		return `### 📍 Phase ${phase.index} / ${total}  –  ${phase.phase_prompt}
+
+		You are resuming a multi-phase task.  
+		**Overall user goal** (for reference, do *not* re-plan):  
+		────────────────────────────────────────  
+		${originalPrompt.trim()}  
+		────────────────────────────────────────  
+
+		## 🎯 Objective of this phase
+		Complete every sub-task listed below **and nothing else**.
+
+		## 📂 Relevant paths / artifacts
+		${pathsSection}
+
+		## 🗒️ Sub-tasks to carry out in this phase
+		${subtasksSection}
+
+		---
+
+		### 🔧 Tool-use rules for *execution* phases
+		1. **Do not** create new high-level phases or plans.  
+		2. Use the built-in tools (\`<write_to_file>\`, \`<execute_command>\`, …) to accomplish the sub-tasks.  
+		3. After each tool call, wait for the tool result before issuing another call.  
+		4. When **all** listed sub-tasks are finished, wrap up with  
+		\`\`\`
+		<attempt_completion>
+		{concise summary of what was done and where the outputs are}
+		</attempt_completion>
+		\`\`\`  
+
+		If you realise a prerequisite is missing, briefly explain it inside \`<thinking>\` **before** taking action.  
+		Only proceed when you are confident the current phase can be completed.
+
+		Begin now.`;
+		}
+
 	/**
 	 * Process phases extracted from the assistant message
 	 * @param assistantMessage The message from the assistant containing phase information
 	 * @param originalPrompt The original user prompt that initiated this task
 	 * @returns Promise<boolean> indicating whether the execution loop should end
 	 */
-	private async processPhases(assistantMessage: string, originalPrompt: string): Promise<boolean> {
-		// Create a phase tracker for this assistant message with proper API integration
-		const phaseTracker = new PhaseTracker(
-			assistantMessage,
-			originalPrompt,
-			// Provide an apiClientFactory that creates clients for each phase
-			(pathsToClient) => {
-				console.log(`ApiClientFactory: Creating client for paths: ${pathsToClient.join(', ')}`);
-				return {
-					initialize: (paths) => {
-						console.log(`ApiClient: Initializing for paths: ${paths.join(', ')}`);
-						// 필요한 경우 초기화 로직 추가
-					},
-					close: () => {
-						console.log(`ApiClient: Closing`);
-						// 필요한 경우 종료 로직 추가
-					},
-					executeCommand: async (command) => {
-						console.log(`Executing command: ${command}`);
-						//ApiClient는 string을 반환해야 하므로 executeCommandTool의 결과를 적절히 변환합니다.
-						const [_, toolResponse] = await this.executeCommandTool(command);
-						if (typeof toolResponse === 'string') {
-							return toolResponse;
-						} else if (Array.isArray(toolResponse)) {
-							return toolResponse.map(r => r.type === 'text' ? r.text : '').join('\n');
-						}
-						return String(toolResponse); // Fallback
-					},
-					writeToFile: async (filePath, content) => {
-						console.log(`Writing to file: ${filePath}`);
-						// 이제 this.executeToolUse를 호출합니다.
-						await this.executeToolUse("write_to_file", { path: filePath, content: content });
-					},
-					readFile: async (filePath) => {
-						console.log(`Reading file: ${filePath}`);
-						// 이제 this.executeToolUse를 호출합니다.
-						const result = await this.executeToolUse("read_file", { path: filePath });
-						if (typeof result === 'string') {
-							return result;
-						} else if (result && Array.isArray(result)) {
-							return result.map(r => r.type === 'text' ? r.text : '').join('\n');
-						} else if (result && typeof result === 'object' && 'text' in result) {
-							return String((result as any).text);
-						}
-						return ""; // 또는 오류 처리
-					},
-					executeToolUse: async (toolName, params) => {
-						console.log(`Executing tool ${toolName} with params:`, JSON.stringify(params));
-						// 이제 this.executeToolUse를 직접 호출합니다. params의 타입이 Record<string, string>이므로
-						// Task의 executeToolUse가 Record<string, any>를 받는다면 캐스팅이 필요 없을 수 있습니다.
-						// ApiClient 인터페이스와 Task.executeToolUse의 params 타입을 일치시키는 것이 좋습니다.
-						return this.executeToolUse(toolName as ToolUseName, params as Record<string, any>);
-					}
-				};
-			},
-			// taskExecutor 인자 대신 sidebarController와 outputChannel을 전달
-			this.sidebarController, // Task 클래스의 sidebarController 멤버
-			this.outputChannel      // Task 클래스의 outputChannel 멤버
-		);
-		
-		// Check if there are phases to process
-		if (phaseTracker.totalPhases <= 1) {
-			console.log("No phases or only one phase detected, skipping phase-based processing");
-			this.outputChannel?.appendLine("No phases or only one phase detected, skipping phase-based processing.");
+	private async processPhases(assistantMessage: string): Promise<boolean> {
+		// If the phase tracker is not initialized, return false
+		if (!this.phaseTracker) {
 			return false;
 		}
-		
-        this.outputChannel?.appendLine(`Detected ${phaseTracker.totalPhases} phases. Starting phase processing.`);
-        console.log(`Detected ${phaseTracker.totalPhases} phases in the assistant message`);
 
-        // Process each phase sequentially
-        // moveToNextPhase가 새로운 Task를 시작하므로, 이 루프는 각 Phase의 시작을 담당하고
-        // 실제 Phase 내용 처리는 새로 시작된 Task에서 이루어지게 됩니다.
-        // 따라서 이 루프는 한 번만 실행되거나, Phase 시작 요청만 보내는 역할로 변경될 수 있습니다.
-        if (phaseTracker.hasNextPhase()) {
-            const nextPrompt = await phaseTracker.moveToNextPhase(); // 첫 번째 Phase 시작 요청
-            if (nextPrompt) {
-                this.outputChannel?.appendLine(`Phase ${phaseTracker.currentPhase?.index} initiated with prompt: ${phaseTracker.currentPhase?.phase_prompt}`);
-                // 여기서 추가적인 API 요청이나 스트림 처리를 직접 하지 않고,
-                // PhaseTracker가 sidebarController를 통해 새 Task를 시작하도록 위임합니다.
-                // 이 함수는 다음 Phase를 시작하라는 "신호"를 보내는 역할만 하게 됩니다.
-                // 실제 Phase의 진행은 새로 생성된 Task 인스턴스에서 처리됩니다.
-                // 따라서, 이 processPhases 함수는 첫 번째 Phase를 시작한 후 true를 반환하여
-                // 현재 Task의 실행 루프를 종료하고, 새로운 Phase Task가 이어받도록 할 수 있습니다.
-                return true; // Indicate that a new phase task has been initiated, and this task might end.
-            } else {
-                this.outputChannel?.appendLine("Failed to initiate the first phase.");
-                console.log("No more phases available or failed to move to the first phase.");
-                return false;
-            }
-        }
+		// In Plan mode, we only parse the plan and create phases
+		if (this.isPhaseRoot) {
+			const parsed: Phase[] = parsePlanFromOutput(assistantMessage);
 
-        // 만약 모든 Phase를 순차적으로 이 Task 인스턴스 내에서 관리하고 싶다면,
-        // PhaseTracker.moveToNextPhase()가 새 Task를 시작한 후,
-        // 해당 Task의 완료를 기다리는 메커니즘이 필요합니다.
-        // 현재 구조에서는 moveToNextPhase가 비동기적으로 새 Task를 시작하고 바로 반환하므로,
-        // 아래의 while 루프는 의도대로 동작하지 않을 가능성이 높습니다.
+			if (parsed.length === 0) {
+				this.outputChannel.appendLine("No phases found in the assistant message.");
+				return false;
+			}
 
-        // console.log("Original while loop for phase processing is being re-evaluated due to new task-per-phase model.");
-        // while (phaseTracker.hasNextPhase()) {
-        // 	// ... (기존 로직은 새로운 Task 기반 모델에서는 직접 실행되지 않음) ...
-        // }
+			const nextIndexBase = 2;
+			const remapped = parsed.map((phase, i) => ({
+				...phase,
+				index: nextIndexBase + i,
+			}))
 
-        // 모든 Phase 시작 요청이 완료되었거나, 더 이상 진행할 Phase가 없을 때
-        this.outputChannel?.appendLine("All phase initiation requests have been processed by the current task.");
-        return false; // Or true depending on whether the main task loop should continue or end.
-    }
+			this.phaseTracker.addPhasesFromPlan(remapped);
+			this.phaseTracker.markCurrentPhaseComplete();
+
+			this.sidebarController.onTaskCompleted?.(this, assistantMessage);
+			return true;
+		}
+		return false;
+	}
 
 	async recursivelyMakeClineRequests(userContent: UserContent, includeFileDetails: boolean = false): Promise<boolean> {
 		if (this.abort) {
@@ -3772,7 +3816,7 @@ private async executeToolUse(toolName: ToolUseName, params: Record<string, any>)
 				const originalPrompt = userContent[0]?.type === "text" ? userContent[0].text : ""
 				
 				// Process phases using a separate method
-				const didEndLoop = await this.processPhases(assistantMessage, originalPrompt)
+				const didEndLoop = await this.processPhases(assistantMessage)
 				if (didEndLoop) {
 					return true;
 				}
