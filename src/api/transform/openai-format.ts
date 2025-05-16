@@ -14,31 +14,76 @@ export const PROMPTS = {
 3. Ensure each phase has a clear starting and completion point
 4. Consider logical dependencies (e.g., files need to be created before used)
 
-**Step 3:** Return your implementation in this format:
-1. First, the complete \`assistantMessage\` with all required tags
-2. Then, a numbered list of phases with the format:
-   \`\`\`
-   1. [Phase Name/Description]: 
-      - [Brief explanation of what this phase accomplishes]
-      - [List of associated tag operations in this phase]
-   \`\`\`
+**Step 3:** Return your implementation in the following EXACT format:
+1. First, provide your complete \`assistantMessage\` with all required tags
+2. Then, add a divider: \`---\n## Phase Plan\`
+3. Finally, list your phases using this specific format:
 
-For example:
-1. File Creation Phase: 
-   - Creating necessary source files and directories
-   - <write_to_file> for main.py, <write_to_file> for config.json
+\`\`\`
+Phase 1: [Phase Name/Description]
+- Description: [Brief explanation of what this phase accomplishes]
+- Paths: [List of relevant file paths, one per line]
+- Subtasks:
+  * [Specific task 1]
+  * [Specific task 2]
+
+Phase 2: [Phase Name/Description]
+- Description: [Brief explanation of what this phase accomplishes]
+- Paths: [List of relevant file paths, one per line]
+- Subtasks:
+  * [Specific task 1]
+  * [Specific task 2]
+\`\`\`
+
+**Alternatively, you may provide phases in this structured JSON format:**
+
+\`\`\`json
+{
+  "phases": [
+    {
+      "index": 1,
+      "phase_prompt": "Phase Name/Description",
+      "description": "Brief explanation of what this phase accomplishes",
+      "paths": ["file1.js", "file2.js"],
+      "subtasks": [
+        {"description": "Specific task 1", "type": "write_to_file"},
+        {"description": "Specific task 2", "type": "execute_command"}
+      ]
+    },
+    {
+      "index": 2,
+      "phase_prompt": "Next Phase Name/Description",
+      "description": "Brief explanation of what this phase accomplishes",
+      "paths": ["file3.js"],
+      "subtasks": [
+        {"description": "Another specific task", "type": "write_to_file"}
+      ]
+    }
+  ]
+}
+\`\`\`
+
+For example (text format):
+\`\`\`
+Phase 1: File Creation Phase
+- Description: Creating necessary source files and directories
+- Paths: 
+  main.py
+  config.json
+- Subtasks:
+  * Create main.py with application entry point
+  * Create config.json with initial configuration
    
-2. Database Setup Phase:
-   - Setting up database schema and initial data
-   - <write_to_file> for schema.sql, <execute_command> to initialize DB
+Phase 2: Database Setup Phase
+- Description: Setting up database schema and initial data
+- Paths:
+  schema.sql
+- Subtasks:
+  * Create schema.sql with database structure
+  * Initialize database with schema
+\`\`\`
 
-3. Application Logic Phase:
-   - Implementing core business logic and functions
-   - <write_to_file> for business_logic.py
-
-4. Testing and Execution Phase:
-   - Running tests and demonstrating functionality
-   - <execute_command> to run tests, <attempt_completion> with results`,
+Always add a clear divider between your assistantMessage and the Phase Plan. Be specific and structured in listing your phases to ensure easy parsing.`,
 } as const
 
 export function convertToOpenAiMessages(
