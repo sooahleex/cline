@@ -151,13 +151,10 @@ export class Controller {
 	 * 새 task + 새 PhaseTracker를 생성한다.
 	 */
 	public async spawnNewTask(newPrompt?: string, images?: string[]) {
-		// (1) 현재 Task 중단
-		await this.clearTask()
-
-		// (2) 혹시나 남아있을 수 있는 phaseTracker도 제거 (아래 initTask에서 새로 만들 예정)
+		// (1) 혹시나 남아있을 수 있는 phaseTracker도 제거 (아래 initTask에서 새로 만들 예정)
 		this.phaseTracker = undefined
 
-		// (3) 새 task 로직
+		// (2) 새 task 로직
 		await this.initTask(newPrompt, images /* historyItem = undefined */)
 	}
 
@@ -310,7 +307,8 @@ export class Controller {
 				// Could also do this in extension .ts
 				//this.postMessageToWebview({ type: "text", text: `Extension: ${Date.now()}` })
 				// initializing new instance of Cline will make sure that any agentically running promises in old instance don't affect our new task. this essentially creates a fresh slate for the new task
-				await this.initTask(message.text, message.images)
+				await this.spawnNewTask(message.text, message.images)
+				// await this.initTask(message.text, message.images)
 				break
 			case "apiConfiguration":
 				if (message.apiConfiguration) {
