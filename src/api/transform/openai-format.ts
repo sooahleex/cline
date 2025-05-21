@@ -1,85 +1,80 @@
 import { Anthropic } from "@anthropic-ai/sdk"
+import { has } from "node_modules/cheerio/dist/esm/api/traversing"
 import OpenAI from "openai"
 
-export const PROMPTS = {
-	PLANNING: `**Step 1:** First, analyze the user's request and produce your \`assistantMessage\` using the following tags:
-1. \`<thinking>…</thinking>\` - Explain your overall approach and reasoning
-2. \`<execute_command>…</execute_command>\` - Any commands to be executed  
-3. \`<write_to_file>…</write_to_file>\` - File creation or modification actions
-4. \`<attempt_completion>…</attempt_completion>\` - Results or completion attempts
-**Step 2:** Organize your implementation into distinct phases. For each phase:
-1. Identify a clear, independent unit of work with a specific goal
-2. Include only related operations that should be completed together
-3. Ensure each phase has a clear starting and completion point
-4. Consider logical dependencies (e.g., files need to be created before used)
-**Step 3:** Return your implementation in the following EXACT format:
-1. First, provide your complete \`assistantMessage\` with all required tags
-2. Then, add a divider: \`---\n## Phase Plan\`
-3. Finally, list your phases using this specific format:
+export const PLANNING_PROMPT = `
+You are a coding assistant that must break down the user's request into phases.
+
+**1) Provide your complete 'assistantMessage'** with these tag rules:
+- \`<thinking>…</thinking>\`: Summarize your internal reasoning or approach
+- \`<execute_command>…</execute_command>\`: Shell commands to run
+- \`<write_to_file>…</write_to_file>\`: File creation or editing
+- \`<attempt_completion>…</attempt_completion>\`: Summaries or final completion output
+
+Within \`assistantMessage\`, you can place multiple tags, but do not add extra disclaimers or text outside these tags.
+
+**2) After that entire 'assistantMessage', add a divider** line:
 \`\`\`
-Phase 1: [Phase Name/Description]
-- Description: [Brief explanation of what this phase accomplishes]
-- Paths: [List of relevant file paths, one per line]
-- Subtasks:
-  * [Specific task 1]
-  * [Specific task 2]
-Phase 2: [Phase Name/Description]
-- Description: [Brief explanation of what this phase accomplishes]
-- Paths: [List of relevant file paths, one per line]
-- Subtasks:
-  * [Specific task 1]
-  * [Specific task 2]
+---
+## Phase Plan
 \`\`\`
-**Alternatively, you may provide phases in this structured JSON format:**
+
+**3) Provide the Phase Plan** using *either* the “Text Format” *or* the “JSON Format”.  
+- If you need **1, 2, or more** phases, create exactly that many.  
+- The example shows 2 phases for illustration only. **Add as many phases as you see fit.**  
+
+**Text Format**:
+\`\`\`
+Phase 1: [Phase Name or Title]
+- Description: [Brief explanation of this phase]
+- Paths:
+  pathA
+  pathB
+- Subtasks:
+  * [Subtask 1]
+  * [Subtask 2]
+
+Phase 2: [Another Phase]
+- Description: ...
+- ...
+Phase 3: ...
+\`\`\`
+
+**JSON Format**:
 \`\`\`json
 {
   "phases": [
     {
       "index": 1,
-      "phase_prompt": "Phase Name/Description",
-      "description": "Brief explanation of what this phase accomplishes",
-      "paths": ["file1.js", "file2.js"],
+      "phase_prompt": "Name/Description",
+      "description": "Brief explanation",
+      "paths": ["pathA", "pathB"],
       "subtasks": [
-        {"description": "Specific task 1", "type": "write_to_file"},
-        {"description": "Specific task 2", "type": "execute_command"}
+        {"description": "some subtask", "type": "write_to_file"},
+        ...
       ]
     },
     {
       "index": 2,
-      "phase_prompt": "Next Phase Name/Description",
-      "description": "Brief explanation of what this phase accomplishes",
-      "paths": ["file3.js"],
-      "subtasks": [
-        {"description": "Another specific task", "type": "write_to_file"}
-      ]
+      "phase_prompt": "Another Phase",
+      "description": "Brief explanation",
+      ...
     }
+    // add as many as you need
   ]
 }
 \`\`\`
-For example (text format):
-\`\`\`
-Phase 1: File Creation Phase
-- Description: Creating necessary source files and directories
-- Paths: 
-  main.py
-  config.json
-- Subtasks:
-  * Create main.py with application entry point
-  * Create config.json with initial configuration
-   
-Phase 2: Database Setup Phase
-- Description: Setting up database schema and initial data
-- Paths:
-  schema.sql
-- Subtasks:
-  * Create schema.sql with database structure
-  * Initialize database with schema
-\`\`\`
-Always add a clear divider between your assistantMessage and the Phase Plan. Be specific and structured in listing your phases to ensure easy parsing.`,
-} as const
+
+Remember:
+1. \`assistantMessage\` must come first (with the tags).
+2. Then the divider line: \`---\\n## Phase Plan\`
+3. Then your phases. 
+`
+
 
 export function convertToOpenAiMessages(
 	anthropicMessages: Anthropic.Messages.MessageParam[],
+	hasInsertedPlanningPromptOnce: boolean = false,
 ): OpenAI.Chat.ChatCompletionMessageParam[] {
 	const openAiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = []
 
@@ -225,11 +220,13 @@ export function convertToOpenAiMessages(
 	}
 
 	// Add planning prompt only for the first message
-	if (openAiMessages.length > 0 && openAiMessages[0].role === "user") {
-		openAiMessages.splice(1, 0, {
-			role: "user",
-			content: PROMPTS.PLANNING,
-		})
+	if (openAiMessages.length > 0 && !hasInsertedPlanningPromptOnce) {
+		if (openAiMessages[0].role === "user") {
+			openAiMessages.unshift({
+				role: "system",
+				content: PLANNING_PROMPT,
+			})
+		}
 	}
 
 	return openAiMessages

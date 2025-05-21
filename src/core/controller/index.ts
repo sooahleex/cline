@@ -59,7 +59,6 @@ import { get } from "node:http"
 import p from "proxyquire"
 import { PhaseTracker } from "../assistant-message/phase-tracker"
 
-
 /*
 https://github.com/microsoft/vscode-webview-ui-toolkit-samples/blob/main/default/weather-webview/src/providers/WeatherViewProvider.ts
 
@@ -147,6 +146,21 @@ export class Controller {
 		await updateGlobalState(this.context, "userInfo", info)
 	}
 
+	/**
+	 * spawnNewTask - 현재 진행 중인 Task를 완전히 종료하고,
+	 * 새 task + 새 PhaseTracker를 생성한다.
+	 */
+	public async spawnNewTask(newPrompt?: string, images?: string[]) {
+		// (1) 현재 Task 중단
+		await this.clearTask()
+
+		// (2) 혹시나 남아있을 수 있는 phaseTracker도 제거 (아래 initTask에서 새로 만들 예정)
+		this.phaseTracker = undefined
+
+		// (3) 새 task 로직
+		await this.initTask(newPrompt, images /* historyItem = undefined */)
+	}
+
 	async initTask(task?: string, images?: string[], historyItem?: HistoryItem) {
 		await this.clearTask() // ensures that an existing task doesn't exist before starting a new one, although this shouldn't be possible since user must clear task before starting a new one
 		const {
@@ -177,17 +191,11 @@ export class Controller {
 			await updateGlobalState(this.context, "autoApprovalSettings", updatedAutoApprovalSettings)
 		}
 
-		let tracker = this.phaseTracker
-		let isPhaseRoot = false
-		if (!tracker) {
-			tracker = new PhaseTracker(
-				task ?? "",
-				this,
-				this.outputChannel,
-			)
-			this.phaseTracker = tracker
-			isPhaseRoot = true
-		}
+		this.phaseTracker = undefined
+
+		const newTracker = new PhaseTracker(task ?? "", this, this.outputChannel)
+		this.phaseTracker = newTracker
+		const isPhaseRoot = true // this is the root phase of the task, so we can set it to true
 
 		this.task = new Task(
 			this.context,
@@ -204,7 +212,7 @@ export class Controller {
 			chatSettings,
 			this,
 			this.outputChannel,
-			tracker,
+			newTracker,
 			isPhaseRoot,
 			shellIntegrationTimeout,
 			enableCheckpointsSetting ?? true,
@@ -1448,17 +1456,21 @@ Commit message:`
 		}
 	}
 
-	public async runPhasesSequentially(
-		phases: string[],
-		originalPrompt: string,
-		outputChannel: vscode.OutputChannel
-	) {
-		outputChannel.appendLine("Starting ${phases.length} phases...");
-		for (let i=0; i<phases.length; i++) {
-			const phasePrompt = phases[i];
-			outputChannel.appendLine(`Running phase ${i+1}/${phases.length}: ${phasePrompt}`);
+	public async runPhasesSequentially(phases: string[], originalPrompt: string, outputChannel: vscode.OutputChannel) {
+		outputChannel.appendLine("Starting ${phases.length} phases...")
+		for (let i = 0; i < phases.length; i++) {
+			const phasePrompt = phases[i]
+			outputChannel.appendLine(`Running phase ${i + 1}/${phases.length}: ${phasePrompt}`)
 			// create a brand-new Task instance for each phase
-			const { apiConfiguration, customInstructions, autoApprovalSettings, browserSettings, chatSettings, shellIntegrationTimeout, enableCheckpointsSetting } = await getAllExtensionState(this.context);
+			const {
+				apiConfiguration,
+				customInstructions,
+				autoApprovalSettings,
+				browserSettings,
+				chatSettings,
+				shellIntegrationTimeout,
+				enableCheckpointsSetting,
+			} = await getAllExtensionState(this.context)
 
 			const phaseTask = new Task(
 				this.context,
@@ -1483,35 +1495,36 @@ Commit message:`
 				phasePrompt, // this is the task text for this phase
 				undefined, // no images for this phase
 				undefined, // no historyItem for this phase
-			);
+			)
 
 			// wait for this phase to fully complete before moving on
 			// (our patched Task.startTask will return only after the phase's loop has ended)
 			await pWaitFor(() => phaseTask.didFinishAbortingStream || phaseTask.abandoned === false, {
 				timeout: 3_000,
 				interval: 1000,
-			});
-			outputChannel.appendLine(`Phase ${i+1} completed.`);
+			})
+			outputChannel.appendLine(`Phase ${i + 1} completed.`)
 		}
-		outputChannel.appendLine("All phases completed.");
+		outputChannel.appendLine("All phases completed.")
 	}
 
 	public async onTaskCompleted(task: Task, resultSummary: string): Promise<void> {
 		// this is called when the task is completed, so we can do any cleanup or finalization here
-		const tracker = task.getPhaseTracker?.() || this.phaseTracker;
-		if (!tracker) {return}
-
-		if (tracker.hasNextPhase()) {
-			await tracker.moveToNextPhase(resultSummary).catch(err =>
-				this.outputChannel.appendLine(`Error moving to next phase: ${err}`),
-			);
-		} else {
-			vscode.window.showInformationMessage("🎉 All phases finished!");
-			this.phaseTracker = undefined; // reset phase tracker
+		const tracker = task.getPhaseTracker?.() || this.phaseTracker
+		if (!tracker) {
+			return
 		}
 
+		if (tracker.hasNextPhase()) {
+			await tracker
+				.moveToNextPhase(resultSummary)
+				.catch((err) => this.outputChannel.appendLine(`Error moving to next phase: ${err}`))
+		} else {
+			vscode.window.showInformationMessage("🎉 All phases finished!")
+			this.phaseTracker = undefined // reset phase tracker
+		}
 
-		console.log("[Controller] All phases done. Final result: \n", resultSummary);
+		console.log("[Controller] All phases done. Final result: \n", resultSummary)
 	}
 
 	// dev
