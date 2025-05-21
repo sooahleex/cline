@@ -151,10 +151,7 @@ export class Controller {
 	 * 새 task + 새 PhaseTracker를 생성한다.
 	 */
 	public async spawnNewTask(newPrompt?: string, images?: string[]) {
-		// (1) 혹시나 남아있을 수 있는 phaseTracker도 제거 (아래 initTask에서 새로 만들 예정)
-		this.phaseTracker = undefined
-
-		// (2) 새 task 로직
+		// initTask() already clears any existing task and phase tracker
 		await this.initTask(newPrompt, images /* historyItem = undefined */)
 	}
 
@@ -190,7 +187,13 @@ export class Controller {
 
 		this.phaseTracker = undefined
 
-		const newTracker = new PhaseTracker(task ?? "", this, this.outputChannel)
+		let newTracker: PhaseTracker | undefined
+		if (historyItem) {
+			newTracker = await PhaseTracker.fromCheckpoint(this, this.outputChannel)
+		}
+		if (!newTracker) {
+			newTracker = new PhaseTracker(task ?? "", this, this.outputChannel)
+		}
 		this.phaseTracker = newTracker
 		const isPhaseRoot = true // this is the root phase of the task, so we can set it to true
 
@@ -1285,6 +1288,20 @@ export class Controller {
 		}
 		this.task?.abortTask()
 		this.task = undefined // removes reference to it, so once promises end it will be garbage collected
+
+		try {
+			const workspaceFolder = vscode.workspace.workspaceFolders?.[0]
+			if (workspaceFolder) {
+				const checkpointPath = vscode.Uri.joinPath(workspaceFolder.uri, ".cline", "phase-checkpoints.json")
+				try {
+					await vscode.workspace.fs.delete(checkpointPath, { recursive: false, useTrash: false })
+				} catch {
+					// Ignore errors, such as if file doesn't exist
+				}
+			}
+		} catch (e) {
+			console.error("Error clearing checkpoint file:", e)
+		}
 	}
 
 	// Caching mechanism to keep track of webview messages + API conversation history per provider instance
@@ -1506,8 +1523,7 @@ Commit message:`
 		outputChannel.appendLine("All phases completed.")
 	}
 
-	public async onTaskCompleted(task: Task, resultSummary: string): Promise<void> {
-		// this is called when the task is completed, so we can do any cleanup or finalization here
+	public async onPhaseCompleted(task: Task, resultSummary: string): Promise<void> {
 		const tracker = task.getPhaseTracker?.() || this.phaseTracker
 		if (!tracker) {
 			return
@@ -1517,10 +1533,16 @@ Commit message:`
 			await tracker
 				.moveToNextPhase(resultSummary)
 				.catch((err) => this.outputChannel.appendLine(`Error moving to next phase: ${err}`))
-		} else {
-			vscode.window.showInformationMessage("🎉 All phases finished!")
-			this.phaseTracker = undefined // reset phase tracker
+		} 
+		if (tracker.allPhasesCompleted()) {
+			await this.onTaskCompleted(task, resultSummary)
 		}
+	}
+
+	public async onTaskCompleted(task: Task, resultSummary: string): Promise<void> {
+		// this is called when the task is completed, so we can do any cleanup or finalization here
+		vscode.window.showInformationMessage("🎉 All phases finished!")
+		this.phaseTracker = undefined // reset phase tracker
 
 		console.log("[Controller] All phases done. Final result: \n", resultSummary)
 	}
