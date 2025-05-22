@@ -1533,7 +1533,7 @@ Commit message:`
 			await tracker
 				.moveToNextPhase(resultSummary)
 				.catch((err) => this.outputChannel.appendLine(`Error moving to next phase: ${err}`))
-		} 
+		}
 		if (tracker.allPhasesCompleted()) {
 			await this.onTaskCompleted(task, resultSummary)
 		}

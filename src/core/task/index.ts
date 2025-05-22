@@ -985,7 +985,9 @@ export class Task {
 			if (this.phaseTracker) {
 				const planSteps = parsePlanFromOutput(firstAssistantMessage)
 				this.phaseTracker.addPhasesFromPlan(planSteps)
-				this.phaseTracker.markCurrentPhaseComplete()
+				const thinkingBlocks = parseAssistantMessageV2(firstAssistantMessage).filter(b=>b.type === "thinking").map(b=>(b as any).content as string)
+				// Plan Phase (Phase1) 완료 표시
+				this.phaseTracker.markCurrentPhaseComplete(undefined, thinkingBlocks)
 			}
 
 			this.sidebarController.onTaskCompleted(this, firstAssistantMessage)
@@ -3899,7 +3901,7 @@ export class Task {
 			}
 			return null
 		} finally {
-			this.isStreaming = false;z
+			this.isStreaming = false;
 		}
 
 		// If streaming was aborted, return null

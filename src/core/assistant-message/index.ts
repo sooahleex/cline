@@ -1,4 +1,4 @@
-export type AssistantMessageContent = TextContent | ToolUse
+export type AssistantMessageContent = TextContent | ToolUse | ThinkingContent
 
 export { parseAssistantMessageV1, parseAssistantMessageV2 } from "./parse-assistant-message"
 
@@ -6,6 +6,12 @@ export interface TextContent {
 	type: "text"
 	content: string
 	partial: boolean
+}
+
+export interface ThinkingContent {
+    type: "thinking"
+    content: string
+    partial: boolean
 }
 
 export const toolUseNames = [
@@ -81,7 +87,7 @@ export interface Subtask {
 
 export interface Phase {
     index: number;
-    // thinking field removed as per suggestion
+    thinking: string[];
     paths: string[];
     status: PhaseStatus;
     phase_prompt: string;
@@ -175,7 +181,8 @@ function createPhasesFromMatches(
     // Create phases from the numbered list descriptions
     const phases: Phase[] = phaseMatches.map(phaseMatch => ({
         index: phaseMatch.index,
-        paths: [],    // Will be filled in later
+        thinking: [],
+        paths: [],
         status: "pending",
         phase_prompt: phaseMatch.description,
         subtasks: extractSubtasksFromDetails(phaseMatch.details)
@@ -324,6 +331,7 @@ function extractStandardPhases(raw: string): Phase[] {
 
             phases.push({
                 index: phaseIndex++,
+                thinking: [],
                 paths: [],
                 status: "pending",
                 phase_prompt: cleanHeading,
@@ -349,6 +357,7 @@ function extractStandardPhases(raw: string): Phase[] {
     // If no headings found, create a single phase
     return [{
         index: 1,
+        thinking: [],
         paths: extractAllPaths(raw),
         status: "pending",
         phase_prompt: "Implementation Phase",
@@ -417,6 +426,7 @@ export function parsePlanFromOutput(raw: string): Phase[] {
     while ((m = regex.exec(raw)) !== null) {
         found.push({
             index: Number(m[1]),
+            thinking: [],
             paths: [],
             status: "pending",
             phase_prompt: m[2].trim(),
