@@ -9,7 +9,7 @@ import chalk from "chalk"
 
 import { createRequire } from "module"
 const require = createRequire(import.meta.url)
-const protoc = path.join(require.resolve("grpc-tools"), "../bin/protoc.js")
+const protoc = path.join(require.resolve("grpc-tools"), "../bin/protoc")
 
 const __filename = fileURLToPath(import.meta.url)
 const SCRIPT_DIR = path.dirname(__filename)
