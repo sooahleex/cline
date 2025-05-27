@@ -110,6 +110,10 @@ import { isInTestMode } from "../../services/test/TestMode"
 import { processFilesIntoText } from "@integrations/misc/extract-text"
 import { featureFlagsService } from "@services/posthog/feature-flags/FeatureFlagsService"
 import { StreamingJsonReplacer, ChangeLocation } from "@core/assistant-message/diff-json"
+import { PhaseTracker } from "../assistant-message"
+import { Controller } from "../controller"
+import { Phase, Subtask, parsePlanFromOutput } from "../assistant-message/index"
+import { parse } from "node:path"
 
 export const USE_EXPERIMENTAL_CLAUDE4_FEATURES = false
 
@@ -132,6 +136,8 @@ export class Task {
 	private postMessageToWebview: (message: ExtensionMessage) => Promise<void>
 	private reinitExistingTaskFromId: (taskId: string) => Promise<void>
 	private cancelTask: () => Promise<void>
+	private sidebarController: Controller
+	private outputChannel: vscode.OutputChannel
 
 	readonly taskId: string
 	private taskIsFavorited?: boolean
@@ -170,6 +176,10 @@ export class Task {
 	private fileContextTracker: FileContextTracker
 	private modelContextTracker: ModelContextTracker
 
+	// phase tracking
+	private phaseTracker?: PhaseTracker
+	private isPhaseRoot: boolean = false
+
 	// streaming
 	isWaitingForFirstChunk = false
 	isStreaming = false
@@ -198,6 +208,10 @@ export class Task {
 		autoApprovalSettings: AutoApprovalSettings,
 		browserSettings: BrowserSettings,
 		chatSettings: ChatSettings,
+		sidebarController: Controller,
+		outputChannel: vscode.OutputChannel,
+		phaseTracker: PhaseTracker,
+		isPhaseRoot: boolean = false,
 		shellIntegrationTimeout: number,
 		enableCheckpointsSetting: boolean,
 		customInstructions?: string,
@@ -214,6 +228,10 @@ export class Task {
 		this.postMessageToWebview = postMessageToWebview
 		this.reinitExistingTaskFromId = reinitExistingTaskFromId
 		this.cancelTask = cancelTask
+		this.sidebarController = sidebarController
+		this.outputChannel = outputChannel
+		this.phaseTracker = phaseTracker
+		this.isPhaseRoot = isPhaseRoot
 		this.clineIgnoreController = new ClineIgnoreController(cwd)
 		// Initialization moved to startTask/resumeTaskFromHistory
 		this.terminalManager = new TerminalManager()
@@ -961,20 +979,25 @@ export class Task {
 
 		await this.postStateToWebview()
 
-		await this.say("text", task, images, files)
+		let phaseAwarePrompt: string
+		if (this.phaseTracker) {
+			const phase = this.phaseTracker.currentPhase
+			phaseAwarePrompt = this.isPhaseRoot
+				? (task ?? "")
+				: this.buildPhasePrompt(phase, this.phaseTracker.totalPhases, this.phaseTracker.getOriginalPrompt())
+		} else {
+			phaseAwarePrompt = task ?? ""
+		}
+
+		await this.say("text", task, images)
 
 		this.isInitialized = true
 
 		let imageBlocks: Anthropic.ImageBlockParam[] = formatResponse.imageBlocks(images)
-
-		let userContent: UserContent = [
-			{
-				type: "text",
-				text: `<task>\n${task}\n</task>`,
-			},
+		const userContent: UserContent = [
+			{ type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>` },
 			...imageBlocks,
 		]
-
 		if (files && files.length > 0) {
 			const fileContentString = await processFilesIntoText(files)
 			if (fileContentString) {
@@ -985,7 +1008,30 @@ export class Task {
 			}
 		}
 
+		if (this.isPhaseRoot) {
+			const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userContent)
+
+			if (this.phaseTracker) {
+				const planSteps = parsePlanFromOutput(firstAssistantMessage)
+				this.phaseTracker.addPhasesFromPlan(planSteps)
+				this.phaseTracker.markCurrentPhaseComplete()
+			}
+
+			// 컨트롤러에 ‘이 Phase 끝!’ 알림
+			this.sidebarController.onTaskCompleted(this, firstAssistantMessage)
+			return // ← 루트-Phase Task 종료
+		}
+
+		/* 2-B. 실행 Phase(2,3,…) : 기존 loop 사용 ---------------------------- */
 		await this.initiateTaskLoop(userContent)
+
+		// await this.initiateTaskLoop([
+		// 	{
+		// 		type: "text",
+		// 		text: `<task>\n${task}\n</task>`,
+		// 	},
+		// 	...imageBlocks,
+		// ])
 	}
 
 	private async resumeTaskFromHistory() {
@@ -1183,6 +1229,44 @@ export class Task {
 				this.consecutiveMistakeCount++
 			}
 		}
+	}
+
+	/**
+	 * Like `initiateTaskLoop` but returns *just* the first assistant message as a string,
+	 * so that you can parse out your phases/plan.
+	 */
+	private async initiateTaskLoopCaptureFirstResponse(userContent: UserContent): Promise<string> {
+		// very similar to initiateTaskLoop, but:
+		// 1) Runs exactly one full turn(user->assistant)
+		// 2) Captures and returns the raw assistantMessage text
+		// 3) Aborts any further recursive looping
+
+		// 1. Push user turn into conversation history
+		await this.addToApiConversationHistory({ role: "user", content: userContent })
+		// 2. Show the “api_req_started” UI
+		await this.say(
+			"api_req_started",
+			JSON.stringify({ request: userContent.map((b) => formatContentBlockToMarkdown(b)).join("\n\n") }),
+		)
+
+		// reuse the existing streaming machinery
+		const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1)
+		let assistantText = ""
+		for await (const chunk of firstStream) {
+			if (chunk.type === "text") {
+				assistantText += chunk.text
+			}
+		}
+
+		// persist to history, so the Controller sees it if needed
+		await this.say("api_req_finished")
+		await this.addToApiConversationHistory({
+			role: "assistant",
+			content: [{ type: "text", text: assistantText }],
+		})
+		await this.postStateToWebview()
+
+		return assistantText
 	}
 
 	async abortTask() {
@@ -4127,6 +4211,7 @@ export class Task {
 								}
 
 								// we already sent completion_result says, an empty string asks relinquishes control over button and field
+								let phaseFinished = false
 								const {
 									response,
 									text,
@@ -4134,7 +4219,13 @@ export class Task {
 									files: completionFiles,
 								} = await this.ask("completion_result", "", false)
 								if (response === "yesButtonClicked") {
+									phaseFinished = true // user clicked yes, so we can continue
 									pushToolResult("") // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
+									if (phaseFinished && this.phaseTracker) {
+										this.phaseTracker.markCurrentPhaseComplete()
+										this.sidebarController.onTaskCompleted?.(this, result ?? "")
+										return
+									}
 									break
 								}
 								await this.say("user_feedback", text ?? "", images, completionFiles)
@@ -4216,6 +4307,303 @@ export class Task {
 		if (this.presentAssistantMessageHasPendingUpdates) {
 			this.presentAssistantMessage()
 		}
+	}
+
+	/**
+	 * Reset all streaming state variables
+	 */
+	private resetStreamingState(): void {
+		this.currentStreamingContentIndex = 0
+		this.assistantMessageContent = []
+		this.didCompleteReadingStream = false
+		this.userMessageContent = []
+		this.userMessageContentReady = false
+		this.didRejectTool = false
+		this.didAlreadyUseTool = false
+		this.presentAssistantMessageLocked = false
+		this.didAutomaticallyRetryFailedApiRequest = false
+	}
+
+	private showNotificationForApprovalIfAutoApprovalEnabled(message: string) {
+		if (this.autoApprovalSettings.enabled && this.autoApprovalSettings.enableNotifications) {
+			showSystemNotification({
+				subtitle: "Cline is acting...",
+				message: message,
+			})
+		}
+	}
+
+	/**
+	 * Process API stream and handle the response
+	 */
+	private async processApiStream(
+		stream: ApiStream,
+		updateApiReqMsg: (cancelReason?: ClineApiReqCancelReason, streamingFailedMessage?: string) => void,
+		abortStream: (cancelReason: ClineApiReqCancelReason, streamingFailedMessage?: string) => Promise<void>,
+		inputTokens: number,
+		outputTokens: number,
+		cacheWriteTokens: number,
+		cacheReadTokens: number,
+		totalCost: number | undefined,
+	): Promise<{
+		assistantMessage: string
+		reasoningMessage: string
+		inputTokens: number
+		outputTokens: number
+		cacheWriteTokens: number
+		cacheReadTokens: number
+		totalCost: number | undefined
+	} | null> {
+		let assistantMessage = ""
+		let reasoningMessage = ""
+		this.isStreaming = true
+		let didReceiveUsageChunk = false
+
+		try {
+			// Process stream chunks
+			for await (const chunk of stream) {
+				if (!chunk) {
+					continue
+				}
+
+				// Handle different chunk types
+				switch (chunk.type) {
+					case "usage":
+						// Process usage data...
+						didReceiveUsageChunk = true
+
+						inputTokens += chunk.inputTokens
+						outputTokens += chunk.outputTokens
+						cacheWriteTokens += chunk.cacheWriteTokens ?? 0
+						cacheReadTokens += chunk.cacheReadTokens ?? 0
+						totalCost = chunk.totalCost
+						break
+
+					case "reasoning":
+						// Process reasoning...
+						reasoningMessage += chunk.reasoning
+						if (!this.abort) {
+							await this.say("reasoning", reasoningMessage, undefined, undefined, true)
+						}
+						break
+
+					case "text":
+						// Process text...
+						if (reasoningMessage && assistantMessage.length === 0) {
+							await this.say("reasoning", reasoningMessage, undefined, undefined, false)
+						}
+						assistantMessage += chunk.text
+
+						// Parse and present content
+						const prevLength = this.assistantMessageContent.length
+						this.assistantMessageContent = parseAssistantMessageV2(assistantMessage)
+						if (this.assistantMessageContent.length > prevLength) {
+							this.userMessageContentReady = false
+						}
+						this.presentAssistantMessage()
+						break
+				}
+
+				// Handle interruptions
+				if (this.abort || this.didRejectTool || this.didAlreadyUseTool) {
+					// Add appropriate message and break
+					if (this.abort) {
+						if (!this.abandoned) {
+							await abortStream("user_cancelled")
+						}
+					} else if (this.didRejectTool) {
+						assistantMessage += "\n\n[Response interrupted by user feedback]"
+					} else {
+						assistantMessage +=
+							"\n\n[Response interrupted by a tool use result. Only one tool may be used at a time and should be placed at the end of the message.]"
+					}
+					break
+				}
+			}
+		} catch (error) {
+			// Handle stream errors
+			if (!this.abandoned) {
+				this.abortTask()
+				const errorMessage = this.formatErrorWithStatusCode(error)
+				await abortStream("streaming_failed", errorMessage)
+				await this.reinitExistingTaskFromId(this.taskId)
+			}
+			return null
+		} finally {
+			this.isStreaming = false
+		}
+
+		// If streaming was aborted, return null
+		if (this.abort) {
+			return null
+		}
+
+		this.didCompleteReadingStream = true
+
+		// Complete any partial blocks
+		const partialBlocks = this.assistantMessageContent.filter((block) => block.partial)
+		partialBlocks.forEach((block) => {
+			block.partial = false
+		})
+
+		if (partialBlocks.length > 0) {
+			this.presentAssistantMessage()
+		}
+
+		return { assistantMessage, reasoningMessage, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens, totalCost }
+	}
+
+	private async executeToolUse(toolName: ToolUseName, params: Record<string, any>): Promise<ToolResponse | undefined | void> {
+		console.log(`Task.executeToolUse called with toolName: ${toolName}, params:`, params)
+		switch (toolName) {
+			case "write_to_file":
+				if (
+					params.path &&
+					typeof params.path === "string" &&
+					params.content !== undefined &&
+					typeof params.content === "string"
+				) {
+					// 실제 파일 쓰기 로직 호출 또는 구현
+					// 예시: await this.someInternalWriteFileMethod(params.path, params.content);
+					// 이 메서드는 void를 반환하거나, 성공/실패 여부를 나타내는 ToolResponse를 반환할 수 있습니다.
+					// 아래는 vscode.workspace.fs.writeFile을 사용하는 간단한 예시입니다.
+					try {
+						const workspaceFolder = vscode.workspace.workspaceFolders?.[0]
+						if (!workspaceFolder) {
+							throw new Error("No workspace folder found.")
+						}
+						const filePath = vscode.Uri.joinPath(workspaceFolder.uri, params.path)
+						await vscode.workspace.fs.writeFile(filePath, new Uint8Array(Buffer.from(params.content, "utf8")))
+						return // 성공 시 void 반환
+					} catch (error) {
+						console.error(`Error writing to file ${params.path}:`, error)
+						return formatResponse.toolError(`Failed to write to file ${params.path}: ${(error as Error).message}`)
+					}
+				} else {
+					return formatResponse.toolError(
+						`Missing or invalid parameters for write_to_file: path and content are required.`,
+					)
+				}
+			case "read_file":
+				if (params.path && typeof params.path === "string") {
+					// 실제 파일 읽기 로직 호출 또는 구현
+					// 예시: return await this.someInternalReadFileMethod(params.path);
+					try {
+						const workspaceFolder = vscode.workspace.workspaceFolders?.[0]
+						if (!workspaceFolder) {
+							throw new Error("No workspace folder found.")
+						}
+						const filePath = vscode.Uri.joinPath(workspaceFolder.uri, params.path)
+						const fileContent = await vscode.workspace.fs.readFile(filePath)
+						return Buffer.from(fileContent).toString("utf8")
+					} catch (error) {
+						console.error(`Error reading file ${params.path}:`, error)
+						return formatResponse.toolError(`Failed to read file ${params.path}: ${(error as Error).message}`)
+					}
+				} else {
+					return formatResponse.toolError(`Missing or invalid parameter for read_file: path is required.`)
+				}
+			// 다른 toolName 케이스들을 여기에 추가합니다.
+			// case "execute_command":
+			// 	if (params.command && typeof params.command === 'string') {
+			// 		return this.executeCommandTool(params.command);
+			// 	} else {
+			// 		return formatResponse.toolError(`Missing or invalid parameter for execute_command: command is required.`);
+			// 	}
+			default:
+				console.warn(`Unsupported toolName in Task.executeToolUse: ${toolName}`)
+				return formatResponse.toolError(`Tool ${toolName} is not supported.`)
+		}
+	}
+
+	public getPhaseTracker(): PhaseTracker | undefined {
+		return this.phaseTracker
+	}
+
+	public canSpawnSubtasks(): boolean {
+		return this.isPhaseRoot
+	}
+
+	/**
+	 * Build the system / user prompt that will be fed to the LLM for one *execution*
+	 * phase ( i.e. **after** the planning phase has produced the full roadmap ).
+	 *
+	 * @param phase          The Phase record returned by PhaseTracker.currentPhase
+	 * @param total          Total number of phases in the roadmap
+	 * @param originalPrompt The very first user request – shown verbatim for context
+	 */
+	private buildPhasePrompt(phase: Phase, total: number, originalPrompt: string): string {
+		// Helper: pretty-print the path list (can be empty)
+		const pathsSection = phase.paths.length > 0 ? phase.paths.join("\n") : "(no specific files yet)"
+
+		// Helper: numbered sub-tasks (guaranteed at least one – but be defensive)
+		const subtasksSection = phase.subtasks.length
+			? phase.subtasks.map((st: Subtask, i: number) => `${i + 1}. ${st.description.trim()}`).join("\n")
+			: "1. (no explicit sub-tasks – use your best judgement)"
+
+		// Final prompt -------------------------------------------------------------
+		return `### 📍 Phase ${phase.index} / ${total}  –  ${phase.phase_prompt}
+		You are resuming a multi-phase task.  
+		**Overall user goal** (for reference, do *not* re-plan):  
+		────────────────────────────────────────  
+		${originalPrompt.trim()}  
+		────────────────────────────────────────  
+		## 🎯 Objective of this phase
+		Complete every sub-task listed below **and nothing else**.
+		## 📂 Relevant paths / artifacts
+		${pathsSection}
+		## 🗒️ Sub-tasks to carry out in this phase
+		${subtasksSection}
+		---
+		### 🔧 Tool-use rules for *execution* phases
+		1. **Do not** create new high-level phases or plans.  
+		2. Use the built-in tools (\`<write_to_file>\`, \`<execute_command>\`, …) to accomplish the sub-tasks.  
+		3. After each tool call, wait for the tool result before issuing another call.  
+		4. When **all** listed sub-tasks are finished, wrap up with  
+		\`\`\`
+		<attempt_completion>
+		{concise summary of what was done and where the outputs are}
+		</attempt_completion>
+		\`\`\`  
+		If you realise a prerequisite is missing, briefly explain it inside \`<thinking>\` **before** taking action.  
+		Only proceed when you are confident the current phase can be completed.
+		Begin now.`
+	}
+
+	/**
+	 * Process phases extracted from the assistant message
+	 * @param assistantMessage The message from the assistant containing phase information
+	 * @param originalPrompt The original user prompt that initiated this task
+	 * @returns Promise<boolean> indicating whether the execution loop should end
+	 */
+	private async processPhases(assistantMessage: string): Promise<boolean> {
+		// If the phase tracker is not initialized, return false
+		if (!this.phaseTracker) {
+			return false
+		}
+
+		// In Plan mode, we only parse the plan and create phases
+		if (this.isPhaseRoot) {
+			const parsed: Phase[] = parsePlanFromOutput(assistantMessage)
+
+			if (parsed.length === 0) {
+				this.outputChannel.appendLine("No phases found in the assistant message.")
+				return false
+			}
+
+			const nextIndexBase = 2
+			const remapped = parsed.map((phase, i) => ({
+				...phase,
+				index: nextIndexBase + i,
+			}))
+
+			this.phaseTracker.addPhasesFromPlan(remapped)
+			this.phaseTracker.markCurrentPhaseComplete()
+
+			this.sidebarController.onTaskCompleted?.(this, assistantMessage)
+			return true
+		}
+		return false
 	}
 
 	async recursivelyMakeClineRequests(userContent: UserContent, includeFileDetails: boolean = false): Promise<boolean> {
@@ -4470,6 +4858,21 @@ export class Task {
 			let reasoningMessage = ""
 			this.isStreaming = true
 			let didReceiveUsageChunk = false
+
+			const processingResult = await this.processApiStream(
+				stream,
+				updateApiReqMsg,
+				abortStream,
+				inputTokens,
+				outputTokens,
+				cacheWriteTokens,
+				cacheReadTokens,
+				totalCost,
+			)
+
+			if (!processingResult) {
+				return true // Stream was aborted, end the loop
+			}
 			try {
 				for await (const chunk of stream) {
 					if (!chunk) {
@@ -4588,6 +4991,14 @@ export class Task {
 				this.presentAssistantMessage() // if there is content to update then it will complete and update this.userMessageContentReady to true, which we pwaitfor before making the next request. all this is really doing is presenting the last partial message that we just set to complete
 			}
 
+			assistantMessage = processingResult.assistantMessage
+			reasoningMessage = processingResult.reasoningMessage
+			inputTokens = processingResult.inputTokens
+			outputTokens = processingResult.outputTokens
+			cacheWriteTokens = processingResult.cacheWriteTokens
+			cacheReadTokens = processingResult.cacheReadTokens
+			totalCost = processingResult.totalCost
+
 			updateApiReqMsg()
 			await this.saveClineMessagesAndUpdateHistory()
 			await this.postStateToWebview()
@@ -4608,6 +5019,15 @@ export class Task {
 					role: "assistant",
 					content: [{ type: "text", text: assistantMessage }],
 				})
+
+				// Extract the original prompt to use with phase tracking
+				const originalPrompt = userContent[0]?.type === "text" ? userContent[0].text : ""
+
+				// Process phases using a separate method
+				const didEndLoop = await this.processPhases(assistantMessage)
+				if (didEndLoop) {
+					return true
+				}
 
 				// NOTE: this comment is here for future reference - this was a workaround for userMessageContent not getting set to true. It was due to it not recursively calling for partial blocks when didRejectTool, so it would get stuck waiting for a partial block to complete before it could continue.
 				// in case the content blocks finished
@@ -4632,7 +5052,7 @@ export class Task {
 				}
 
 				const recDidEndLoop = await this.recursivelyMakeClineRequests(this.userMessageContent)
-				didEndLoop = recDidEndLoop
+				return recDidEndLoop
 			} else {
 				// if there's no assistant_responses, that means we got no text or tool_use content blocks from API which we should assume is an error
 				await this.say(
@@ -4648,9 +5068,8 @@ export class Task {
 						},
 					],
 				})
+				return false
 			}
-
-			return didEndLoop // will always be false for now
 		} catch (error) {
 			// this should never happen since the only thing that can throw an error is the attemptApiRequest, which is wrapped in a try catch that sends an ask where if noButtonClicked, will clear current task and destroy this instance. However to avoid unhandled promise rejection, we will end this loop which will end execution of this instance (see startTask)
 			return true // needs to be true so parent loop knows to end task
