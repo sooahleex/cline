@@ -57,6 +57,9 @@ import { sendAuthCallbackEvent } from "./account/subscribeToAuthCallback"
 import { refreshClineRulesToggles } from "@core/context/instructions/user-instructions/cline-rules"
 import { refreshExternalRulesToggles } from "@core/context/instructions/user-instructions/external-rules"
 import { refreshWorkflowToggles } from "@core/context/instructions/user-instructions/workflows"
+import { get } from "node:http"
+import p from "proxyquire"
+import { PhaseTracker } from "../assistant-message/phase-tracker"
 
 /*
 https://github.com/microsoft/vscode-webview-ui-toolkit-samples/blob/main/default/weather-webview/src/providers/WeatherViewProvider.ts
@@ -69,6 +72,7 @@ export class Controller {
 
 	private disposables: vscode.Disposable[] = []
 	task?: Task
+	private phaseTracker?: PhaseTracker
 	workspaceTracker: WorkspaceTracker
 	mcpHub: McpHub
 	accountService: ClineAccountService
@@ -121,6 +125,7 @@ export class Controller {
 		this.workspaceTracker.dispose()
 		this.mcpHub.dispose()
 		this.outputChannel.appendLine("Disposed all disposables")
+		this.phaseTracker = undefined
 
 		console.error("Controller disposed")
 	}
@@ -156,6 +161,14 @@ export class Controller {
 			taskHistory,
 		} = await getAllExtensionState(this.context)
 
+		let tracker = this.phaseTracker
+		let isPhaseRoot = false
+		if (!tracker) {
+			tracker = new PhaseTracker(task ?? "", this, this.outputChannel)
+			this.phaseTracker = tracker
+			isPhaseRoot = true
+		}
+
 		const NEW_USER_TASK_COUNT_THRESHOLD = 10
 
 		// Check if the user has completed enough tasks to no longer be considered a "new user"
@@ -184,6 +197,10 @@ export class Controller {
 			autoApprovalSettings,
 			browserSettings,
 			chatSettings,
+			this,
+			this.outputChannel,
+			tracker,
+			isPhaseRoot,
 			shellIntegrationTimeout,
 			enableCheckpointsSetting ?? true,
 			customInstructions,
@@ -192,6 +209,77 @@ export class Controller {
 			files,
 			historyItem,
 		)
+	}
+
+	public async runPhasesSequentially(phases: string[], originalPrompt: string, outputChannel: vscode.OutputChannel) {
+		outputChannel.appendLine("Starting ${phases.length} phases...")
+		for (let i = 0; i < phases.length; i++) {
+			const phasePrompt = phases[i]
+			outputChannel.appendLine(`Running phase ${i + 1}/${phases.length}: ${phasePrompt}`)
+			// create a brand-new Task instance for each phase
+			const {
+				apiConfiguration,
+				customInstructions,
+				autoApprovalSettings,
+				browserSettings,
+				chatSettings,
+				shellIntegrationTimeout,
+				enableCheckpointsSetting,
+			} = await getAllExtensionState(this.context)
+
+			const phaseTask = new Task(
+				this.context,
+				this.mcpHub,
+				this.workspaceTracker,
+				(history) => this.updateTaskHistory(history),
+				() => this.postStateToWebview(),
+				(message) => this.postMessageToWebview(message),
+				(taskId) => this.reinitExistingTaskFromId(taskId),
+				() => this.cancelTask(),
+				apiConfiguration,
+				autoApprovalSettings,
+				browserSettings,
+				chatSettings,
+				this, // pass controller so Task can callback to runPhasesSequentially if needed
+				this.outputChannel, // same outputChannel
+				this.phaseTracker!,
+				false,
+				shellIntegrationTimeout,
+				enableCheckpointsSetting ?? true,
+				customInstructions,
+				phasePrompt, // this is the task text for this phase
+				undefined, // no images for this phase
+				undefined, // no historyItem for this phase
+			)
+
+			// wait for this phase to fully complete before moving on
+			// (our patched Task.startTask will return only after the phase's loop has ended)
+			await pWaitFor(() => phaseTask.didFinishAbortingStream || phaseTask.abandoned === false, {
+				timeout: 3_000,
+				interval: 1000,
+			})
+			outputChannel.appendLine(`Phase ${i + 1} completed.`)
+		}
+		outputChannel.appendLine("All phases completed.")
+	}
+
+	public async onTaskCompleted(task: Task, resultSummary: string): Promise<void> {
+		// this is called when the task is completed, so we can do any cleanup or finalization here
+		const tracker = task.getPhaseTracker?.() || this.phaseTracker
+		if (!tracker) {
+			return
+		}
+
+		if (tracker.hasNextPhase()) {
+			await tracker
+				.moveToNextPhase(resultSummary)
+				.catch((err) => this.outputChannel.appendLine(`Error moving to next phase: ${err}`))
+		} else {
+			vscode.window.showInformationMessage("🎉 All phases finished!")
+			this.phaseTracker = undefined // reset phase tracker
+		}
+
+		console.log("[Controller] All phases done. Final result: \n", resultSummary)
 	}
 
 	async reinitExistingTaskFromId(taskId: string) {
