@@ -1,7 +1,8 @@
 // src/core/assistant-message/phase-tracker.ts
-import { parsePhases, PhaseStatus, Phase } from "../assistant-message/index"
 import { Controller } from "../controller"
 import * as vscode from "vscode"
+
+export type PhaseStatus = "in-complete" | "approved"
 
 export enum PhaseExecutionMode {
 	Sequential,
@@ -9,28 +10,36 @@ export enum PhaseExecutionMode {
 	Contional,
 }
 
-export interface SubtaskState {
-	id: string
+export interface Phase {
+	index: number
+	phase_prompt?: string
+	title: string
+	description?: string
+	paths: string[]
+	subtasks: Subtask[]
+}
+
+export interface Subtask {
+	index: number
 	description: string
 	completed: boolean
-	type: string
+}
+
+export interface SubtaskState {
+	index: number
+	subtask: Subtask
 	result?: string
 	startTime?: number
 	endTime?: number
 }
 
 export interface PhaseState {
-	id: number
-	prompt: string
-	phase_prompt: string
+	index: number
+	origin_prompt?: string
+	phase?: Phase
 	subtasks: SubtaskState[]
 	complete: boolean
 	status: PhaseStatus | "in-progress" | "completed" | "skipped"
-	index: number
-	paths: string[]
-	thinking: string[]
-	artifacts: string[]
-	dependencies: number[]
 	startTime?: number
 	endTime?: number
 }
@@ -38,10 +47,161 @@ export interface PhaseState {
 export interface PhaseResult {
 	phaseId: number
 	summary: string
-	thinking: string[]
-	artifacts: string[]
 	subtaskResults: Record<string, string>
 	executionTime: number
+}
+
+export interface ParsedPlan {
+	rawPlan: string
+	phases: Phase[]
+}
+
+export function parsePhases(rawPlan: string): Phase[] {
+	const planContent = rawPlan
+
+	// Slice and push for each Phase header
+	interface PhaseInfo {
+		index: number
+		phase_prompt: string
+		title: string
+		description: string
+		paths: string[]
+		subtasks: string[]
+	}
+
+	const phaseMatches: PhaseInfo[] = []
+	const headerRegex = /^Phase\s*(\d+)\s*[:\-]\s*([^\r\n]+)/gim
+	const matches = Array.from(planContent.matchAll(headerRegex))
+
+	for (let i = 0; i < matches.length; i++) {
+		const h = matches[i]
+		const idx = parseInt(h[1], 10)
+		const title = h[2].trim()
+
+		// The block extends from right after this header until the start of the next header
+		const start = (h.index ?? 0) + h[0].length
+		// peek ahead to find the start index of the next header
+		const end = i + 1 < matches.length ? (matches[i + 1].index ?? planContent.length) : planContent.length
+
+		const block = planContent.slice(start, end).trim()
+		// Parse description / paths / subtasks from the block
+		const description = /-?\s*Description:\s*([^\r\n]+)/i.exec(block)?.[1].trim() || ""
+
+		const pathsMatch = /-?\s*Paths:\s*([\s\S]*?)(?=(?:-?\s*Description:|-?\s*Subtasks:|$))/i.exec(block)
+		const pathsText = pathsMatch ? pathsMatch[1] : ""
+		const paths = pathsText
+			.split(/\r?\n/)
+			.map((l) => l.replace(/^[\s*•\-\s]+/, "").trim())
+			.filter((l) => l.length > 0)
+
+		const subtaskMatch = /-?\s*Subtasks:\s*([\s\S]*)/i.exec(block)
+		const subtaskText = subtaskMatch ? subtaskMatch[1] : ""
+		const subtasks = subtaskText
+			.split(/\r?\n/)
+			.map((l) => l.replace(/^[\s*•\-\s]+/, "").trim())
+			.filter((l) => l.length > 0)
+
+		phaseMatches.push({
+			index: idx,
+			phase_prompt: h[0].trim(),
+			title: title,
+			description: description,
+			paths: paths,
+			subtasks: subtasks,
+		})
+	}
+
+	if (phaseMatches.length > 0) {
+		return createPhasesFromMatches(phaseMatches)
+	}
+	return []
+}
+
+function createPhasesFromMatches(
+	phaseMatches: {
+		index: number
+		phase_prompt: string
+		title: string
+		description: string
+		paths: string[]
+		subtasks: string[]
+	}[],
+): Phase[] {
+	// Create phases from the numbered list descriptions
+	const phases: Phase[] = phaseMatches.map((phaseMatch) => ({
+		index: phaseMatch.index,
+		phase_prompt: phaseMatch.phase_prompt,
+		title: phaseMatch.title,
+		description: phaseMatch.description,
+		paths: phaseMatch.paths,
+		subtasks: phaseMatch.subtasks.map((subtask, i) => ({
+			index: i,
+			description: subtask,
+			completed: false,
+		})),
+	}))
+
+	// // Extract tool uses to associate with phases and subtasks
+	// const toolUseRegex = /<(write_to_file|execute_command|attempt_completion)>([\s\S]*?)<\/\1>/g
+	// const toolUses: { type: string; content: string; index: number }[] = []
+	// let match
+
+	// while ((match = toolUseRegex.exec(raw)) !== null) {
+	// 	const toolType = match[1]
+	// 	const content = match[2].trim()
+	// 	// Find which phase this tool use most likely belongs to
+	// 	const phaseIndex = findPhaseForToolUse(match.index, raw, phases)
+	// 	toolUses.push({ type: toolType, content, index: phaseIndex || 0 })
+	// }
+
+	// // Associate tool uses with phases based on position in the text
+	// toolUses.forEach((toolUse) => {
+	// 	if (toolUse.index > 0 && toolUse.index <= phases.length) {
+	// 		const phase = phases[toolUse.index - 1]
+	// 		// Add a subtask for this tool use if not already present
+	// 		const hasMatchingSubtask = phase.subtasks.some(
+	// 			(subtask) => subtask.type === toolUse.type || subtask.description.toLowerCase().includes(toolUse.type),
+	// 		)
+
+	// 		if (!hasMatchingSubtask) {
+	// 			phase.subtasks.push({
+	// 				description: `Perform ${toolUse.type} operation`,
+	// 				type: toolUse.type,
+	// 				completed: false,
+	// 			})
+	// 		}
+	// 	}
+	// })
+
+	return phases
+}
+
+export function parsePlanFromOutput(raw: string): ParsedPlan {
+	const planRegex = /^#{1,6}\s*Phase\s*Plan\s*[\r\n]+```[\r\n]?([\s\S]*?)```/im
+	const planMatch = planRegex.exec(raw)
+	if (!planMatch) {
+		throw new Error("No Phase Plan section found in the input text")
+	}
+
+	const rawPlan = planMatch[1].trim()
+
+	const phases = parsePhases(rawPlan)
+	if (phases.length === 0) {
+		throw new Error("No phases found in the Phase Plan content")
+	}
+
+	return { rawPlan, phases }
+}
+
+export function parseSubtasksFromOutput(msg: string): {
+	id: number
+	completed: boolean
+	note: string
+}[] {
+	// 예시: <subtask id="0" status="done">…</subtask> 같은 태그를 뽑는다거나,
+	// parseAssistantMessageV2(msg) 로 thinking/path 블록을 분류해도 됩니다.
+	// 여기서는 더 구체적인 포맷에 맞춰 구현해주세요.
+	return []
 }
 
 export class PhaseTracker {
@@ -57,48 +217,36 @@ export class PhaseTracker {
 		newStatus: PhaseStatus | "in-progress" | "completed" | "skipped",
 	) => void)[] = []
 
+	public rawPlanContent?: string
+
 	constructor(
 		private originalPrompt: string,
 		private controller: Controller,
 		private outputChannel: vscode.OutputChannel,
 	) {
-		// 1단계: Plan Mode 로 첫 Phase(Plan) 세팅
+		// Step 1: Set up the first Phase (Plan) in Plan Mode
 		this.phases.push({
-			id: 1,
-			prompt: originalPrompt,
-			phase_prompt: originalPrompt,
+			index: 0,
+			origin_prompt: originalPrompt,
 			subtasks: [],
 			complete: false,
-			status: "pending",
-			index: 1,
-			paths: [],
-			thinking: [],
-			artifacts: [],
-			dependencies: [],
+			status: "in-complete",
 			startTime: Date.now(),
 		})
 	}
 
-	/** Plan 단계가 끝난 뒤 호출해서 실제 실행 Phase 목록을 채웁니다. */
+	// Called after the Plan phase is completed to populate the actual execution Phase list.
 	public addPhasesFromPlan(parsedPhases: Phase[]): void {
 		parsedPhases.forEach((p) => {
 			this.phases.push({
-				id: p.index,
-				prompt: p.phase_prompt,
-				phase_prompt: p.phase_prompt,
+				index: p.index,
+				phase: p,
 				subtasks: p.subtasks.map((st, i) => ({
-					id: `${p.index}-${i}`,
-					description: st.description,
-					completed: false,
-					type: st.type || "generic",
+					index: i,
+					subtask: st,
 				})),
 				complete: false,
-				status: "pending",
-				index: p.index,
-				paths: p.paths || [],
-				thinking: [],
-				artifacts: [],
-				dependencies: [p.index - 1].filter((x) => x > 0) || [],
+				status: "in-complete",
 				startTime: Date.now(),
 				endTime: undefined,
 			})
@@ -107,21 +255,21 @@ export class PhaseTracker {
 		this.saveCheckpoint().catch(() => {})
 	}
 
-	public completeSubtask(phaseId: number, subtaskId: string, result?: string): void {
-		const phase = this.phases.find((p) => p.id === phaseId)
+	public completeSubtask(phaseId: number, subtaskId: number, result?: string): void {
+		const phase = this.phases.find((p) => p.index === phaseId)
 		if (!phase) {
 			return
 		}
-		const st = phase.subtasks.find((s) => s.id === subtaskId)
+		const st = phase.subtasks.find((s) => s.index === subtaskId)
 		if (!st) {
 			return
 		}
-		st.completed = true
+		st.subtask.completed = true
 		st.result = result
 		st.endTime = Date.now()
 		this.outputChannel.appendLine(`Subtask ${subtaskId} of Phase ${phaseId} completed.`)
-		if (phase.subtasks.every((s) => s.completed)) {
-			this.completePhase(phase.id)
+		if (phase.subtasks.every((s) => s.subtask.completed)) {
+			this.completePhase(phase.index)
 		}
 		if (this.checkpointEnabled && this.checkpointFrequency === "subtask") {
 			this.saveCheckpoint()
@@ -129,31 +277,28 @@ export class PhaseTracker {
 	}
 
 	public markCurrentPhaseComplete(summary: string = "", thinking: string[] = []): void {
-		const id = this.phases[this.currentPhaseIndex].id
+		const id = this.phases[this.currentPhaseIndex].index
 		this.completePhase(id, summary, thinking)
 	}
 
 	private completePhase(phaseId: number, summary: string = "", thinking: string[] = []): void {
-		const phase = this.phases.find((p) => p.id === phaseId)
+		const phase = this.phases.find((p) => p.index === phaseId)
 		if (!phase) {
 			return
 		}
 		phase.subtasks.forEach((st) => {
-			if (!st.completed) {
-				st.completed = true
+			if (!st.subtask.completed) {
+				st.subtask.completed = true
 			}
 			st.endTime = st.endTime || Date.now()
 		})
 		phase.complete = true
 		phase.status = "completed"
 		phase.endTime = Date.now()
-		phase.thinking.push(...thinking)
 		const result: PhaseResult = {
 			phaseId,
 			summary,
-			thinking: phase.thinking || [],
-			artifacts: phase.artifacts || [],
-			subtaskResults: phase.subtasks.reduce((acc, st) => ({ ...acc, [st.id]: st.result || "" }), {}),
+			subtaskResults: phase.subtasks.reduce((acc, st) => ({ ...acc, [st.index]: st.result || "" }), {}),
 			executionTime: (phase.endTime || Date.now()) - (phase.startTime || 0),
 		}
 		this.phaseResults.push(result)
@@ -168,10 +313,10 @@ export class PhaseTracker {
 		return this.currentPhaseIndex < this.phases.length - 1
 	}
 
-	public async moveToNextPhase(contextSummary?: string): Promise<string | null> {
+	public async moveToNextPhase(rawPlan?: string): Promise<string | null> {
 		const current = this.phases[this.currentPhaseIndex]
 		if (!current.complete) {
-			this.completePhase(current.id, contextSummary || "", [])
+			this.completePhase(current.index, rawPlan || "", [])
 		}
 		this.currentPhaseIndex++
 		if (this.currentPhaseIndex >= this.phases.length) {
@@ -181,23 +326,27 @@ export class PhaseTracker {
 		const next = this.phases[this.currentPhaseIndex]
 		next.status = "in-progress"
 		next.startTime = Date.now()
-		const prompt = contextSummary
+		const prompt = rawPlan
 			? [
-					`# Previous Phase Summary:`,
-					contextSummary,
+					`# Whole Plan`,
+					rawPlan,
 					``,
 					`# Current Phase (${next.index}/${this.phases.length}):`,
-					next.phase_prompt,
+					next.phase?.phase_prompt,
 				].join("\n")
-			: next.phase_prompt
-		this.notifyPhaseChange(next.id, "in-progress")
-		this.outputChannel.appendLine(`PhaseTracker: \Starting Phase ${next.index}: "${next.phase_prompt}"`)
+			: next.phase?.phase_prompt
+
+		if (!prompt) {
+			this.outputChannel.appendLine(`PhaseTracker: No prompt available for Phase ${next.index}.`)
+		}
+		this.notifyPhaseChange(next.index, "in-progress")
+		this.outputChannel.appendLine(`PhaseTracker: \Starting Phase ${next.index}: "${next.phase?.phase_prompt}"`)
 		await this.controller.clearTask()
 		await this.controller.postStateToWebview()
 		await this.controller.postMessageToWebview({ type: "action", action: "chatButtonClicked" })
 		await this.controller.postMessageToWebview({ type: "action", action: "focusChatInput", text: prompt })
 
-		return prompt
+		return prompt ?? null
 	}
 
 	public async executeAll(): Promise<void> {
@@ -222,15 +371,11 @@ export class PhaseTracker {
 
 	private async executeParallel(): Promise<void> {
 		const groups: number[][] = []
-		const pending = new Set(this.phases.map((p) => p.id))
+		const pending = new Set(this.phases.map((p) => p.index))
 		while (pending.size) {
 			const group: number[] = []
 			for (const id of pending) {
-				const phase = this.phases.find((p) => p.id === id)!
-				const depsMet = phase.dependencies.every((d) => this.phases.find((p) => p.id === d)!.complete)
-				if (depsMet) {
-					group.push(id)
-				}
+				const phase = this.phases.find((p) => p.index === id)!
 			}
 			group.forEach((id) => pending.delete(id))
 			await Promise.all(group.map((id) => this.completePhase(id)))
@@ -240,13 +385,13 @@ export class PhaseTracker {
 	private async executeConditionally(): Promise<void> {
 		const { conditions = {}, defaultAction = "execute" } = this.executionConfig
 		for (const phase of this.phases) {
-			const should = conditions[phase.id] ? await conditions[phase.id]() : defaultAction === "execute"
+			const should = conditions[phase.index] ? await conditions[phase.index]() : defaultAction === "execute"
 			if (should) {
-				await this.completePhase(phase.id)
+				await this.completePhase(phase.index)
 			} else {
 				phase.status = "skipped"
 				phase.complete = true
-				this.notifyPhaseChange(phase.id, "skipped")
+				this.notifyPhaseChange(phase.index, "skipped")
 			}
 		}
 	}
@@ -263,29 +408,18 @@ export class PhaseTracker {
 
 	public get currentPhase(): Phase {
 		const p = this.phases[this.currentPhaseIndex]
-		return {
-			index: p.index,
-			phase_prompt: p.phase_prompt,
-			paths: p.paths,
-			status: p.status as PhaseStatus,
-			subtasks: p.subtasks.map((s) => ({ description: s.description, completed: s.completed, type: s.type })),
+		if (!p.phase) {
+			throw new Error(`Phase ${p.index} is not properly initialized: missing phase data`)
 		}
+		return p.phase
 	}
 
 	public get totalPhases(): number {
 		return this.phases.length
 	}
 
-	public allPhasesCompleted(): boolean {
+	public isAllComplete(): boolean {
 		return this.phases.every((p) => p.complete)
-	}
-
-	public getAllPhasePrompts(): string[] {
-		return this.phases.map((p) => p.prompt)
-	}
-
-	public getThinking(phaseId: number): string[] {
-		return this.phases.find((p) => p.id === phaseId)?.thinking || []
 	}
 
 	private notifyPhaseChange(id: number, status: PhaseStatus | "in-progress" | "completed" | "skipped"): void {
@@ -295,6 +429,7 @@ export class PhaseTracker {
 			} catch {}
 		})
 	}
+
 	public getOriginalPrompt(): string {
 		return this.originalPrompt
 	}
