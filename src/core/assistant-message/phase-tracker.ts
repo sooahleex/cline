@@ -3,30 +3,60 @@ import { parsePhases, PhaseStatus, Phase } from "../assistant-message/index"
 import { Controller } from "../controller"
 import * as vscode from "vscode"
 
-interface SubtaskState {
+export enum PhaseExecutionMode {
+	Sequential,
+	Parallel,
+	Contional,
+}
+
+export interface SubtaskState {
+	id: string
 	description: string
 	completed: boolean
+	type: string
+	result?: string
+	startTime?: number
+	endTime?: number
 }
 
 export interface PhaseState {
 	id: number
 	prompt: string
+	phase_prompt: string
 	subtasks: SubtaskState[]
 	complete: boolean
-	// 👉  Phase 와 호환되도록 최소 필드 추가
-	paths?: string[]
-	status?: PhaseStatus
-	index?: number
-	phase_prompt?: string
+	status: PhaseStatus | "in-progress" | "completed" | "skipped"
+	index: number
+	paths: string[]
+	thinking: string[]
+	artifacts: string[]
+	dependencies: number[]
+	startTime?: number
+	endTime?: number
+}
+
+export interface PhaseResult {
+	phaseId: number
+	summary: string
+	thinking: string[]
+	artifacts: string[]
+	subtaskResults: Record<string, string>
+	executionTime: number
 }
 
 export class PhaseTracker {
 	private phases: PhaseState[] = []
 	private currentPhaseIndex = 0
+	private phaseResults: PhaseResult[] = []
+	private executionConfig: any
+	private phaseExecutionMode: PhaseExecutionMode = PhaseExecutionMode.Sequential
+	private checkpointEnabled: boolean = true
+	private checkpointFrequency: "phase" | "subtask" | "never" = "phase"
+	private phaseChangeListeners: ((
+		phaseId: number,
+		newStatus: PhaseStatus | "in-progress" | "completed" | "skipped",
+	) => void)[] = []
 
-	/**
-	 * @param originalPrompt 사용자 원본 프롬프트 (Plan Mode 에 넘길 내용)
-	 */
 	constructor(
 		private originalPrompt: string,
 		private controller: Controller,
@@ -36,8 +66,16 @@ export class PhaseTracker {
 		this.phases.push({
 			id: 1,
 			prompt: originalPrompt,
-			subtasks: [], // Plan phase엔 Subtask 없음
+			phase_prompt: originalPrompt,
+			subtasks: [],
 			complete: false,
+			status: "pending",
+			index: 1,
+			paths: [],
+			thinking: [],
+			artifacts: [],
+			dependencies: [],
+			startTime: Date.now(),
 		})
 	}
 
@@ -47,133 +85,267 @@ export class PhaseTracker {
 			this.phases.push({
 				id: p.index,
 				prompt: p.phase_prompt,
-				subtasks: p.subtasks.map((st) => ({ description: st.description, completed: false })),
+				phase_prompt: p.phase_prompt,
+				subtasks: p.subtasks.map((st, i) => ({
+					id: `${p.index}-${i}`,
+					description: st.description,
+					completed: false,
+					type: st.type || "generic",
+				})),
 				complete: false,
+				status: "pending",
+				index: p.index,
+				paths: p.paths || [],
+				thinking: [],
+				artifacts: [],
+				dependencies: [p.index - 1].filter((x) => x > 0) || [],
+				startTime: Date.now(),
+				endTime: undefined,
 			})
 		})
 		this.outputChannel.appendLine(`PhaseTracker: ${parsedPhases.length} phases registered.`)
+		this.saveCheckpoint().catch(() => {})
 	}
 
-	/** 특정 Subtask를 완료 표시 */
-	public completeSubtask(subtaskIdx: number): void {
-		const phase = this.phases[this.currentPhaseIndex]
-		if (phase.subtasks[subtaskIdx]) {
-			phase.subtasks[subtaskIdx].completed = true
-			this.outputChannel.appendLine(`PhaseTracker: Phase ${phase.id} - Subtask #${subtaskIdx + 1} 완료`)
+	public completeSubtask(phaseId: number, subtaskId: string, result?: string): void {
+		const phase = this.phases.find((p) => p.id === phaseId)
+		if (!phase) {
+			return
+		}
+		const st = phase.subtasks.find((s) => s.id === subtaskId)
+		if (!st) {
+			return
+		}
+		st.completed = true
+		st.result = result
+		st.endTime = Date.now()
+		this.outputChannel.appendLine(`Subtask ${subtaskId} of Phase ${phaseId} completed.`)
+		if (phase.subtasks.every((s) => s.completed)) {
+			this.completePhase(phase.id)
+		}
+		if (this.checkpointEnabled && this.checkpointFrequency === "subtask") {
+			this.saveCheckpoint()
 		}
 	}
 
-	public markCurrentPhaseComplete(): void {
-		const phase = this.phases[this.currentPhaseIndex]
+	public markCurrentPhaseComplete(summary: string = "", thinking: string[] = []): void {
+		const id = this.phases[this.currentPhaseIndex].id
+		this.completePhase(id, summary, thinking)
+	}
 
-		phase.subtasks.forEach((_, idx) => this.completeSubtask(idx))
+	private completePhase(phaseId: number, summary: string = "", thinking: string[] = []): void {
+		const phase = this.phases.find((p) => p.id === phaseId)
+		if (!phase) {
+			return
+		}
+		phase.subtasks.forEach((st) => {
+			if (!st.completed) {
+				st.completed = true
+			}
+			st.endTime = st.endTime || Date.now()
+		})
 		phase.complete = true
+		phase.status = "completed"
+		phase.endTime = Date.now()
+		phase.thinking.push(...thinking)
+		const result: PhaseResult = {
+			phaseId,
+			summary,
+			thinking: phase.thinking || [],
+			artifacts: phase.artifacts || [],
+			subtaskResults: phase.subtasks.reduce((acc, st) => ({ ...acc, [st.id]: st.result || "" }), {}),
+			executionTime: (phase.endTime || Date.now()) - (phase.startTime || 0),
+		}
+		this.phaseResults.push(result)
+		this.notifyPhaseChange(phaseId, "completed")
+		if (this.checkpointEnabled && this.checkpointFrequency === "phase") {
+			this.saveCheckpoint()
+		}
+		this.outputChannel.appendLine(`Phase ${phaseId} completed.`)
+	}
 
-		this.outputChannel.appendLine(`PhaseTracker: Phase ${phase.id} - ${phase.prompt} marked as completed`)
+	public hasNextPhase(): boolean {
+		return this.currentPhaseIndex < this.phases.length - 1
+	}
+
+	public async moveToNextPhase(contextSummary?: string): Promise<string | null> {
+		const current = this.phases[this.currentPhaseIndex]
+		if (!current.complete) {
+			this.completePhase(current.id, contextSummary || "", [])
+		}
+		this.currentPhaseIndex++
+		if (this.currentPhaseIndex >= this.phases.length) {
+			this.outputChannel.appendLine(`PhaseTracker: All phases completed.`)
+			return null
+		}
+		const next = this.phases[this.currentPhaseIndex]
+		next.status = "in-progress"
+		next.startTime = Date.now()
+		const prompt = contextSummary
+			? [
+					`# Previous Phase Summary:`,
+					contextSummary,
+					``,
+					`# Current Phase (${next.index}/${this.phases.length}):`,
+					next.phase_prompt,
+				].join("\n")
+			: next.phase_prompt
+		this.notifyPhaseChange(next.id, "in-progress")
+		this.outputChannel.appendLine(`PhaseTracker: \Starting Phase ${next.index}: "${next.phase_prompt}"`)
+		await this.controller.clearTask()
+		await this.controller.postStateToWebview()
+		await this.controller.postMessageToWebview({ type: "action", action: "chatButtonClicked" })
+		await this.controller.postMessageToWebview({ type: "action", action: "focusChatInput", text: prompt })
+
+		return prompt
+	}
+
+	public async executeAll(): Promise<void> {
+		switch (this.phaseExecutionMode) {
+			case PhaseExecutionMode.Sequential:
+				await this.executeSequentially()
+				break
+			case PhaseExecutionMode.Parallel:
+				await this.executeParallel()
+				break
+			case PhaseExecutionMode.Contional:
+				await this.executeConditionally()
+				break
+		}
+	}
+
+	private async executeSequentially(): Promise<void> {
+		while (this.hasNextPhase()) {
+			await this.moveToNextPhase()
+		}
+	}
+
+	private async executeParallel(): Promise<void> {
+		const groups: number[][] = []
+		const pending = new Set(this.phases.map((p) => p.id))
+		while (pending.size) {
+			const group: number[] = []
+			for (const id of pending) {
+				const phase = this.phases.find((p) => p.id === id)!
+				const depsMet = phase.dependencies.every((d) => this.phases.find((p) => p.id === d)!.complete)
+				if (depsMet) {
+					group.push(id)
+				}
+			}
+			group.forEach((id) => pending.delete(id))
+			await Promise.all(group.map((id) => this.completePhase(id)))
+		}
+	}
+
+	private async executeConditionally(): Promise<void> {
+		const { conditions = {}, defaultAction = "execute" } = this.executionConfig
+		for (const phase of this.phases) {
+			const should = conditions[phase.id] ? await conditions[phase.id]() : defaultAction === "execute"
+			if (should) {
+				await this.completePhase(phase.id)
+			} else {
+				phase.status = "skipped"
+				phase.complete = true
+				this.notifyPhaseChange(phase.id, "skipped")
+			}
+		}
+	}
+
+	public onPhaseChange(
+		listener: (phaseId: number, status: PhaseStatus | "in-progress" | "completed" | "skipped") => void,
+	): void {
+		this.phaseChangeListeners.push(listener)
+	}
+
+	public get currentSubtasks(): SubtaskState[] {
+		return this.phases[this.currentPhaseIndex].subtasks
+	}
+
+	public get currentPhase(): Phase {
+		const p = this.phases[this.currentPhaseIndex]
+		return {
+			index: p.index,
+			phase_prompt: p.phase_prompt,
+			paths: p.paths,
+			status: p.status as PhaseStatus,
+			subtasks: p.subtasks.map((s) => ({ description: s.description, completed: s.completed, type: s.type })),
+		}
 	}
 
 	public get totalPhases(): number {
 		return this.phases.length
 	}
 
-	public getOriginalPrompt(): string {
-		return this.originalPrompt
-	}
-
-	/** 현 Phase 전체 Subtask가 다 끝났는지 */
-	public isCurrentPhaseComplete(): boolean {
-		const subs = this.currentSubtasks
-		return subs.length > 0 && subs.every((s) => s.completed)
-	}
-	/** 현 Phase의 Subtask 리스트 */
-	public get currentSubtasks(): SubtaskState[] {
-		return this.phases[this.currentPhaseIndex].subtasks
-	}
-
-	/** 지금까지 만들어진 모든 Phase 의 원본 prompt 배열 */
-	public getAllPhasePrompts(): string[] {
-		return this.phases.map((p) => p.prompt)
-	}
-
-	/** 현재 Phase 정의 */
-	public get currentPhase(): Phase {
-		const p = this.phases[this.currentPhaseIndex]
-
-		return {
-			...p,
-
-			index: p.index ?? p.id,
-			phase_prompt: p.phase_prompt ?? p.prompt,
-			paths: p.paths ?? [],
-			status: p.status ?? "pending",
-
-			subtasks: p.subtasks.map((st) => ({
-				description: st.description,
-				completed: st.completed,
-				// Phase 타입이 요구하는 필드. 없으면 'generic' 으로 설정
-				type: (st as any).type ?? "generic",
-			})),
-		}
-	}
-
-	/** 다음 Phase 가 남아 있는지 */
-	public hasNextPhase(): boolean {
-		return this.currentPhaseIndex < this.phases.length - 1
-	}
-
-	/** 전체 Phase 가 모두 완료되었는지 */
 	public allPhasesCompleted(): boolean {
 		return this.phases.every((p) => p.complete)
 	}
 
-	/**
-	 * 직전 Phase 를 완료 처리하고, 다음 Phase 로 넘어가며
-	 * Controller 를 통해 새로운 Task 세션을 띄우고 Prompt 를 전송합니다.
-	 *
-	 * @param contextSummary (Optional) 직전 Phase 결과 요약
-	 * @returns 다음 Phase 에 넘긴 프롬프트, 더 이상 없으면 null
-	 */
-	public async moveToNextPhase(contextSummary?: string): Promise<string | null> {
-		// (1) 현재 Phase 완료 표시
-		this.phases[this.currentPhaseIndex].complete = true
+	public getAllPhasePrompts(): string[] {
+		return this.phases.map((p) => p.prompt)
+	}
 
-		// (2) 다음 Phase 인덱스
-		this.currentPhaseIndex++
-		if (this.currentPhaseIndex >= this.phases.length) {
-			this.outputChannel.appendLine(`PhaseTracker: All phases completed.`)
-			return null
-		}
+	public getThinking(phaseId: number): string[] {
+		return this.phases.find((p) => p.id === phaseId)?.thinking || []
+	}
 
-		const next = this.currentPhase
-
-		// (3) 선택적으로, 요약을 포함한 새로운 Prompt 조합
-		let nextPrompt = next.phase_prompt
-		if (contextSummary) {
-			nextPrompt = [
-				`# 이전 단계 요약:`,
-				contextSummary,
-				``,
-				`# 새로운 단계 (${next.index}/${this.phases.length}):`,
-				next.phase_prompt,
-			].join("\n")
-		}
-
-		// (4) Controller 를 통해 완전 새로운 Task 세션 시작
-		this.outputChannel.appendLine(`PhaseTracker: Starting Phase ${next.index}: "${next.phase_prompt}"`)
-		await this.controller.clearTask()
-		await this.controller.postStateToWebview()
-		// UI 상에서 “새 대화” 버튼 누른 것 처럼 보내기
-		await this.controller.postMessageToWebview({
-			type: "action",
-			action: "chatButtonClicked",
+	private notifyPhaseChange(id: number, status: PhaseStatus | "in-progress" | "completed" | "skipped"): void {
+		this.phaseChangeListeners.forEach((l) => {
+			try {
+				l(id, status)
+			} catch {}
 		})
-		// 실제 LLM 에 던질 메시지
-		await this.controller.postMessageToWebview({
-			type: "action",
-			action: "focusChatInput",
-			text: nextPrompt,
-		})
+	}
+	public getOriginalPrompt(): string {
+		return this.originalPrompt
+	}
 
-		return nextPrompt
+	private async saveCheckpoint(): Promise<void> {
+		try {
+			const workspaceFolder = vscode.workspace.workspaceFolders?.[0]
+			if (!workspaceFolder) {
+				return
+			}
+
+			const checkpointData = {
+				phases: this.phases,
+				currentPhaseIndex: this.currentPhaseIndex,
+				originalPrompt: this.originalPrompt,
+			}
+
+			const checkpointPath = vscode.Uri.joinPath(workspaceFolder.uri, ".cline", "phase-checkpoint.json")
+			try {
+				await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(workspaceFolder.uri, ".cline"))
+			} catch {}
+			await vscode.workspace.fs.writeFile(
+				checkpointPath,
+				new Uint8Array(Buffer.from(JSON.stringify(checkpointData, null, 2))),
+			)
+		} catch (error) {
+			this.outputChannel.appendLine(`Error saving phase checkpoint: ${error}`)
+		}
+	}
+
+	/** Restore tracker progress from .cline/phase-checkpoint.json if present */
+	public static async fromCheckpoint(
+		controller: Controller,
+		outputChannel: vscode.OutputChannel,
+	): Promise<PhaseTracker | undefined> {
+		try {
+			const workspaceFolder = vscode.workspace.workspaceFolders?.[0]
+			if (!workspaceFolder) {
+				return undefined
+			}
+
+			const checkpointPath = vscode.Uri.joinPath(workspaceFolder.uri, ".cline", "phase-checkpoint.json")
+			const data = await vscode.workspace.fs.readFile(checkpointPath)
+			const checkpoint = JSON.parse(data.toString())
+			const tracker = new PhaseTracker(checkpoint.originalPrompt, controller, outputChannel)
+			tracker["phases"] = checkpoint.phases
+			tracker["currentPhaseIndex"] = checkpoint.currentPhaseIndex
+			return tracker
+		} catch (error) {
+			outputChannel.appendLine(`Error restoring phase checkpoint: ${error}`)
+			return undefined
+		}
 	}
 }

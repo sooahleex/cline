@@ -1014,7 +1014,10 @@ export class Task {
 			if (this.phaseTracker) {
 				const planSteps = parsePlanFromOutput(firstAssistantMessage)
 				this.phaseTracker.addPhasesFromPlan(planSteps)
-				this.phaseTracker.markCurrentPhaseComplete()
+				const thinkingBlocks = parseAssistantMessageV2(firstAssistantMessage)
+					.filter((b) => b.type === "thinking")
+					.map((b) => (b as any).content as string)
+				this.phaseTracker.markCurrentPhaseComplete(undefined, thinkingBlocks)
 			}
 
 			// 컨트롤러에 ‘이 Phase 끝!’ 알림
@@ -3646,6 +3649,7 @@ export class Task {
 									)
 								} else {
 									// If no response, the user clicked the "Create New Task" button
+									await this.sidebarController.spawnNewTask(context)
 									pushToolResult(
 										formatResponse.toolResult(`The user has created a new task with the provided context.`),
 									)
@@ -4223,8 +4227,10 @@ export class Task {
 									pushToolResult("") // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
 									if (phaseFinished && this.phaseTracker) {
 										this.phaseTracker.markCurrentPhaseComplete()
-										this.sidebarController.onTaskCompleted?.(this, result ?? "")
-										return
+										this.sidebarController.onPhaseCompleted?.(this, result ?? "")
+										if (this.phaseTracker.allPhasesCompleted()) {
+											this.sidebarController.onTaskCompleted?.(this, result ?? "")
+										}
 									}
 									break
 								}
@@ -4542,17 +4548,17 @@ export class Task {
 			: "1. (no explicit sub-tasks – use your best judgement)"
 
 		// Final prompt -------------------------------------------------------------
-		return `### 📍 Phase ${phase.index} / ${total}  –  ${phase.phase_prompt}
+		return `### Phase ${phase.index} / ${total}  –  ${phase.phase_prompt}
 		You are resuming a multi-phase task.  
 		**Overall user goal** (for reference, do *not* re-plan):  
 		────────────────────────────────────────  
 		${originalPrompt.trim()}  
 		────────────────────────────────────────  
-		## 🎯 Objective of this phase
+		## Objective of this phase
 		Complete every sub-task listed below **and nothing else**.
-		## 📂 Relevant paths / artifacts
+		## Relevant paths / artifacts
 		${pathsSection}
-		## 🗒️ Sub-tasks to carry out in this phase
+		## Sub-tasks to carry out in this phase
 		${subtasksSection}
 		---
 		### 🔧 Tool-use rules for *execution* phases
@@ -4841,24 +4847,13 @@ export class Task {
 			}
 
 			// reset streaming state
-			this.currentStreamingContentIndex = 0
-			this.assistantMessageContent = []
-			this.didCompleteReadingStream = false
-			this.userMessageContent = []
-			this.userMessageContentReady = false
-			this.didRejectTool = false
-			this.didAlreadyUseTool = false
-			this.presentAssistantMessageLocked = false
-			this.presentAssistantMessageHasPendingUpdates = false
-			this.didAutomaticallyRetryFailedApiRequest = false
+			this.resetStreamingState()
 			await this.diffViewProvider.reset()
 
+			// Make initial API request
 			const stream = this.attemptApiRequest(previousApiReqIndex) // yields only if the first chunk is successful, otherwise will allow the user to retry the request (most likely due to rate limit error, which gets thrown on the first chunk)
 			let assistantMessage = ""
 			let reasoningMessage = ""
-			this.isStreaming = true
-			let didReceiveUsageChunk = false
-
 			const processingResult = await this.processApiStream(
 				stream,
 				updateApiReqMsg,
@@ -4873,6 +4868,9 @@ export class Task {
 			if (!processingResult) {
 				return true // Stream was aborted, end the loop
 			}
+
+			this.isStreaming = true
+			let didReceiveUsageChunk = false
 			try {
 				for await (const chunk of stream) {
 					if (!chunk) {
@@ -5019,9 +5017,6 @@ export class Task {
 					role: "assistant",
 					content: [{ type: "text", text: assistantMessage }],
 				})
-
-				// Extract the original prompt to use with phase tracking
-				const originalPrompt = userContent[0]?.type === "text" ? userContent[0].text : ""
 
 				// Process phases using a separate method
 				const didEndLoop = await this.processPhases(assistantMessage)
