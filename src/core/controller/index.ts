@@ -125,11 +125,8 @@ export class Controller {
 		}
 		this.workspaceTracker.dispose()
 		this.mcpHub.dispose()
-<<<<<<< HEAD
-=======
 		this.outputChannel.appendLine("Disposed all disposables")
 		this.phaseTracker = undefined
->>>>>>> b2966c51 (feat: split into phase)
 
 		console.error("Controller disposed")
 	}
@@ -1496,7 +1493,7 @@ Commit message:`
 		outputChannel.appendLine("All phases completed.")
 	}
 
-	public async onPhaseCompleted(task: Task, resultSummary: string): Promise<void> {
+	public async onPhaseCompleted(task: Task, rawPlan: string): Promise<void> {
 		const tracker = task.getPhaseTracker?.() || this.phaseTracker
 		if (!tracker) {
 			return
@@ -1504,11 +1501,11 @@ Commit message:`
 
 		if (tracker.hasNextPhase()) {
 			await tracker
-				.moveToNextPhase(resultSummary)
+				.moveToNextPhase(rawPlan)
 				.catch((err) => this.outputChannel.appendLine(`Error moving to next phase: ${err}`))
 		}
-		if (tracker.allPhasesCompleted()) {
-			await this.onTaskCompleted(task, resultSummary)
+		if (tracker.isAllComplete()) {
+			await this.onTaskCompleted(task, rawPlan)
 		}
 	}
 

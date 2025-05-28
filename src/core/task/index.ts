@@ -110,9 +110,8 @@ import { isInTestMode } from "../../services/test/TestMode"
 import { processFilesIntoText } from "@integrations/misc/extract-text"
 import { featureFlagsService } from "@services/posthog/feature-flags/FeatureFlagsService"
 import { StreamingJsonReplacer, ChangeLocation } from "@core/assistant-message/diff-json"
-import { PhaseTracker } from "../assistant-message"
+import { PhaseTracker, Phase, Subtask, parsePlanFromOutput, parseSubtasksFromOutput } from "../assistant-message/phase-tracker"
 import { Controller } from "../controller"
-import { Phase, Subtask, parsePlanFromOutput } from "../assistant-message/index"
 import { parse } from "node:path"
 
 export const USE_EXPERIMENTAL_CLAUDE4_FEATURES = false
@@ -1010,23 +1009,37 @@ export class Task {
 
 		if (this.isPhaseRoot) {
 			const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userContent)
-
-			if (this.phaseTracker) {
-				const planSteps = parsePlanFromOutput(firstAssistantMessage)
-				this.phaseTracker.addPhasesFromPlan(planSteps)
-				const thinkingBlocks = parseAssistantMessageV2(firstAssistantMessage)
-					.filter((b) => b.type === "thinking")
-					.map((b) => (b as any).content as string)
-				this.phaseTracker.markCurrentPhaseComplete(undefined, thinkingBlocks)
+			if (!this.phaseTracker) {
+				throw new Error("PhaseTracker not initialized")
 			}
 
-			// 컨트롤러에 ‘이 Phase 끝!’ 알림
-			this.sidebarController.onTaskCompleted(this, firstAssistantMessage)
-			return // ← 루트-Phase Task 종료
+			// Add planning phases to the PhaseTracker
+			const { rawPlan, phases: planSteps } = parsePlanFromOutput(firstAssistantMessage)
+			this.phaseTracker!.rawPlanContent = rawPlan
+			this.phaseTracker.addPhasesFromPlan(planSteps)
+
+			await this.say("text", `Here is the proposed plan (Phase Plan):\n\n${rawPlan}`)
+
+			const approved = await this.askForApproval() // TODO: (sa) change to chat approve
+			if (!approved) {
+				await this.say("text", "Plan execution aborted by user.")
+				return
+			}
+
+			// Planning phase is complete, disabling root mode
+			this.isPhaseRoot = false
+
+			// Mark the first phase as complete
+			this.phaseTracker.markCurrentPhaseComplete(undefined)
+			this.sidebarController.onPhaseCompleted(this, rawPlan) // TODO: (sa) show phase result
+
+			await this.processPhases()
+			return
 		}
 
-		/* 2-B. 실행 Phase(2,3,…) : 기존 loop 사용 ---------------------------- */
-		await this.initiateTaskLoop(userContent)
+		// /* 2-B. 실행 Phase(2,3,…) : 기존 loop 사용 ---------------------------- */
+		// await this.initiateTaskLoop(userContent)
+		await this.processPhases()
 
 		// await this.initiateTaskLoop([
 		// 	{
@@ -1035,6 +1048,16 @@ export class Task {
 		// 	},
 		// 	...imageBlocks,
 		// ])
+	}
+
+	private async askForApproval(): Promise<boolean> {
+		const choice = await vscode.window.showInformationMessage(
+			"Do you approve this Phase Plan and want to proceed?",
+			{ modal: true },
+			"Yes",
+			"No",
+		)
+		return choice === "Yes"
 	}
 
 	private async resumeTaskFromHistory() {
@@ -4228,7 +4251,7 @@ export class Task {
 									if (phaseFinished && this.phaseTracker) {
 										this.phaseTracker.markCurrentPhaseComplete()
 										this.sidebarController.onPhaseCompleted?.(this, result ?? "")
-										if (this.phaseTracker.allPhasesCompleted()) {
+										if (this.phaseTracker.isAllComplete()) {
 											this.sidebarController.onTaskCompleted?.(this, result ?? "")
 										}
 									}
@@ -4550,7 +4573,7 @@ export class Task {
 		// Final prompt -------------------------------------------------------------
 		return `### Phase ${phase.index} / ${total}  –  ${phase.phase_prompt}
 		You are resuming a multi-phase task.  
-		**Overall user goal** (for reference, do *not* re-plan):  
+		**Overall user goal** (for reference, do *not* re-plan):
 		────────────────────────────────────────  
 		${originalPrompt.trim()}  
 		────────────────────────────────────────  
@@ -4561,7 +4584,7 @@ export class Task {
 		## Sub-tasks to carry out in this phase
 		${subtasksSection}
 		---
-		### 🔧 Tool-use rules for *execution* phases
+		### Tool-use rules for *execution* phases
 		1. **Do not** create new high-level phases or plans.  
 		2. Use the built-in tools (\`<write_to_file>\`, \`<execute_command>\`, …) to accomplish the sub-tasks.  
 		3. After each tool call, wait for the tool result before issuing another call.  
@@ -4576,40 +4599,43 @@ export class Task {
 		Begin now.`
 	}
 
-	/**
-	 * Process phases extracted from the assistant message
-	 * @param assistantMessage The message from the assistant containing phase information
-	 * @param originalPrompt The original user prompt that initiated this task
-	 * @returns Promise<boolean> indicating whether the execution loop should end
-	 */
-	private async processPhases(assistantMessage: string): Promise<boolean> {
+	private async processPhases(): Promise<boolean> {
 		// If the phase tracker is not initialized, return false
 		if (!this.phaseTracker) {
 			return false
 		}
 
-		// In Plan mode, we only parse the plan and create phases
-		if (this.isPhaseRoot) {
-			const parsed: Phase[] = parsePlanFromOutput(assistantMessage)
+		while (!this.phaseTracker.isAllComplete()) {
+			const phase = this.phaseTracker.currentPhase
+			const total = this.phaseTracker.totalPhases
+			const original = this.phaseTracker.getOriginalPrompt()
 
-			if (parsed.length === 0) {
-				this.outputChannel.appendLine("No phases found in the assistant message.")
-				return false
+			// 1. Generate prompt for each phase
+			const phasePrompt = this.buildPhasePrompt(phase, total, original)
+			const userBlocks: UserContent = [
+				{ type: "text", text: `<task>\n${phasePrompt}\n</task>` },
+				...formatResponse.imageBlocks(/* images? */ []),
+			]
+
+			// 2. Execute this Phase (send all subtasks at once and receive results)
+			const assistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
+
+			// 3. Response parsing: Check completion status for each subtask
+			const subtaskResults = parseSubtasksFromOutput(assistantMessage)
+
+			for (const { id, completed } of subtaskResults) {
+				if (completed) {
+					this.phaseTracker.completeSubtask(phase.index, id)
+				}
 			}
 
-			const nextIndexBase = 2
-			const remapped = parsed.map((phase, i) => ({
-				...phase,
-				index: nextIndexBase + i,
-			}))
-
-			this.phaseTracker.addPhasesFromPlan(remapped)
-			this.phaseTracker.markCurrentPhaseComplete()
-
-			this.sidebarController.onTaskCompleted?.(this, assistantMessage)
-			return true
+			// 4. Check if all phases are completed
+			if (this.phaseTracker.isAllComplete()) {
+				this.sidebarController.onTaskCompleted(this, assistantMessage)
+				// phaseTracker.currentPhase is incremented internally
+			}
 		}
-		return false
+		return true
 	}
 
 	async recursivelyMakeClineRequests(userContent: UserContent, includeFileDetails: boolean = false): Promise<boolean> {
@@ -5019,7 +5045,7 @@ export class Task {
 				})
 
 				// Process phases using a separate method
-				const didEndLoop = await this.processPhases(assistantMessage)
+				const didEndLoop = await this.processPhases()
 				if (didEndLoop) {
 					return true
 				}
