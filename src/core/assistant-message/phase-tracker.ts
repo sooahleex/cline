@@ -228,6 +228,7 @@ export class PhaseTracker {
 		this.phases.push({
 			index: 0,
 			origin_prompt: originalPrompt,
+			phase: { index: 0, phase_prompt: "Plan Phase", title: "Plan Phase", description: "", paths: [], subtasks: [] },
 			subtasks: [],
 			complete: false,
 			status: "in-complete",
@@ -408,8 +409,8 @@ export class PhaseTracker {
 
 	public get currentPhase(): Phase {
 		const p = this.phases[this.currentPhaseIndex]
-		if (!p.phase) {
-			throw new Error(`Phase ${p.index} is not properly initialized: missing phase data`)
+		if (!p || !p.phase) {
+			throw new Error(`Phase ${this.currentPhaseIndex} is not properly initialized: missing phase data`)
 		}
 		return p.phase
 	}
@@ -436,27 +437,50 @@ export class PhaseTracker {
 
 	private async saveCheckpoint(): Promise<void> {
 		try {
-			const workspaceFolder = vscode.workspace.workspaceFolders?.[0]
-			if (!workspaceFolder) {
-				return
+			// 1) 저장할 기본 URI 결정
+			let baseUri: vscode.Uri
+			const ws = vscode.workspace.workspaceFolders
+			if (ws && ws.length > 0) {
+				// 워크스페이스가 열려 있으면 그 첫 번째 폴더 아래에 .cline 디렉터리 생성
+				baseUri = vscode.Uri.joinPath(ws[0].uri, ".cline")
+			} else {
+				// 워크스페이스가 없으면 extension의 globalStorageUri 사용
+				// (package.json에서 "globalStorage" 권한이 필요합니다)
+				baseUri = vscode.Uri.joinPath(this.controller.context.globalStorageUri, ".cline")
 			}
 
-			const checkpointData = {
-				phases: this.phases,
-				currentPhaseIndex: this.currentPhaseIndex,
-				originalPrompt: this.originalPrompt,
-			}
-
-			const checkpointPath = vscode.Uri.joinPath(workspaceFolder.uri, ".cline", "phase-checkpoint.json")
+			// 2) .cline 폴더가 없으면 만든다
 			try {
-				await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(workspaceFolder.uri, ".cline"))
-			} catch {}
-			await vscode.workspace.fs.writeFile(
-				checkpointPath,
-				new Uint8Array(Buffer.from(JSON.stringify(checkpointData, null, 2))),
-			)
+				await vscode.workspace.fs.stat(baseUri)
+			} catch {
+				await vscode.workspace.fs.createDirectory(baseUri)
+			}
+
+			// 3) 체크포인트 데이터 구성
+			const checkpointData: Record<string, any> = {
+				originalPrompt: this.originalPrompt,
+				rawPlanContent: this.rawPlanContent,
+				phases: this.phases, // PhaseState[]
+				currentPhaseIndex: this.currentPhaseIndex, // number
+				phaseResults: this.phaseResults, // PhaseResult[]
+				executionConfig: this.executionConfig, // any
+				phaseExecutionMode: this.phaseExecutionMode, // enum
+				checkpointEnabled: this.checkpointEnabled, // boolean
+				checkpointFrequency: this.checkpointFrequency, // "phase" | "subtask" | "never"
+				// (listeners는 함수이므로 저장 대상에서 제외)
+			}
+			const content = JSON.stringify(checkpointData, null, 2)
+
+			// 4) 원자적 쓰기: .tmp → rename
+			const checkpointUri = vscode.Uri.joinPath(baseUri, "phase-checkpoint.json")
+			const tmpUri = vscode.Uri.joinPath(baseUri, "phase-checkpoint.json.tmp")
+			const encoder = new TextEncoder()
+			await vscode.workspace.fs.writeFile(tmpUri, encoder.encode(content))
+			await vscode.workspace.fs.rename(tmpUri, checkpointUri, { overwrite: true })
+
+			this.outputChannel.appendLine(`✔️ Phase checkpoint saved at: ${checkpointUri.fsPath}`)
 		} catch (error) {
-			this.outputChannel.appendLine(`Error saving phase checkpoint: ${error}`)
+			this.outputChannel.appendLine(`❌ Error saving phase checkpoint: ${error}`)
 		}
 	}
 
@@ -466,20 +490,42 @@ export class PhaseTracker {
 		outputChannel: vscode.OutputChannel,
 	): Promise<PhaseTracker | undefined> {
 		try {
-			const workspaceFolder = vscode.workspace.workspaceFolders?.[0]
-			if (!workspaceFolder) {
-				return undefined
+			// 1) base 저장소 URI 결정 (workspace 우선, 없으면 globalStorage)
+			let baseUri: vscode.Uri
+			const ws = vscode.workspace.workspaceFolders
+			if (ws && ws.length > 0) {
+				baseUri = vscode.Uri.joinPath(ws[0].uri, ".cline")
+			} else {
+				baseUri = vscode.Uri.joinPath(controller.context.globalStorageUri, ".cline")
 			}
 
-			const checkpointPath = vscode.Uri.joinPath(workspaceFolder.uri, ".cline", "phase-checkpoint.json")
-			const data = await vscode.workspace.fs.readFile(checkpointPath)
-			const checkpoint = JSON.parse(data.toString())
+			// 2) 체크포인트 파일 경로
+			const checkpointUri = vscode.Uri.joinPath(baseUri, "phase-checkpoint.json")
+
+			// 3) 파일 읽기
+			const data = await vscode.workspace.fs.readFile(checkpointUri)
+			const text = new TextDecoder().decode(data)
+			const checkpoint = JSON.parse(text)
+
+			// 4) PhaseTracker 복원
 			const tracker = new PhaseTracker(checkpoint.originalPrompt, controller, outputChannel)
-			tracker["phases"] = checkpoint.phases
-			tracker["currentPhaseIndex"] = checkpoint.currentPhaseIndex
+			tracker.phases = checkpoint.phases
+			tracker.currentPhaseIndex = checkpoint.currentPhaseIndex
+			tracker.rawPlanContent = checkpoint.rawPlanContent
+			tracker.phaseResults = checkpoint.phaseResults
+			tracker.executionConfig = checkpoint.executionConfig
+			tracker.phaseExecutionMode = checkpoint.phaseExecutionMode
+			tracker.checkpointEnabled = checkpoint.checkpointEnabled
+			tracker.checkpointFrequency = checkpoint.checkpointFrequency
+			// rawPlanContent 도 저장해 두면—optional
+			if (checkpoint.rawPlanContent) {
+				;(tracker as any).rawPlanContent = checkpoint.rawPlanContent
+			}
+
+			outputChannel.appendLine(`✔️ Restored phase checkpoint from ${checkpointUri.fsPath}`)
 			return tracker
-		} catch (error) {
-			outputChannel.appendLine(`Error restoring phase checkpoint: ${error}`)
+		} catch (err) {
+			outputChannel.appendLine(`⚠️ No phase checkpoint to restore or failed: ${err}`)
 			return undefined
 		}
 	}

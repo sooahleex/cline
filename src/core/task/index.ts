@@ -1262,18 +1262,15 @@ export class Task {
 	 * so that you can parse out your phases/plan.
 	 */
 	private async initiateTaskLoopCaptureFirstResponse(userContent: UserContent): Promise<string> {
-		// very similar to initiateTaskLoop, but:
-		// 1) Runs exactly one full turn(user->assistant)
-		// 2) Captures and returns the raw assistantMessage text
-		// 3) Aborts any further recursive looping
-
-		// 1. Push user turn into conversation history
+		// Push user turn into conversation history
 		await this.addToApiConversationHistory({ role: "user", content: userContent })
-		// 2. Show the “api_req_started” UI
-		await this.say(
-			"api_req_started",
-			JSON.stringify({ request: userContent.map((b) => formatContentBlockToMarkdown(b)).join("\n\n") }),
-		)
+
+		try {
+			const markdown = userContent.map(formatContentBlockToMarkdown).join("\n\n")
+			await this.say("api_req_started", JSON.stringify({ request: markdown }))
+		} catch (e) {
+			console.warn("Could not show api_req_started banner:", e)
+		}
 
 		// reuse the existing streaming machinery
 		const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1)
@@ -4563,7 +4560,7 @@ export class Task {
 	 */
 	private buildPhasePrompt(phase: Phase, total: number, originalPrompt: string): string {
 		// Helper: pretty-print the path list (can be empty)
-		const pathsSection = phase.paths.length > 0 ? phase.paths.join("\n") : "(no specific files yet)"
+		const pathsSection = phase.paths?.length > 0 ? phase.paths?.join("\n") : "(no specific files yet)"
 
 		// Helper: numbered sub-tasks (guaranteed at least one – but be defensive)
 		const subtasksSection = phase.subtasks.length
@@ -4612,10 +4609,9 @@ export class Task {
 
 			// 1. Generate prompt for each phase
 			const phasePrompt = this.buildPhasePrompt(phase, total, original)
-			const userBlocks: UserContent = [
-				{ type: "text", text: `<task>\n${phasePrompt}\n</task>` },
-				...formatResponse.imageBlocks(/* images? */ []),
-			]
+
+			let imageBlocks: Anthropic.ImageBlockParam[] = formatResponse.imageBlocks([])
+			const userBlocks: UserContent = [{ type: "text", text: `<task>\n${phasePrompt}\n</task>` }, ...imageBlocks]
 
 			// 2. Execute this Phase (send all subtasks at once and receive results)
 			const assistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)

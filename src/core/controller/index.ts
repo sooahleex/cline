@@ -172,17 +172,32 @@ export class Controller {
 			taskHistory,
 		} = await getAllExtensionState(this.context)
 
-		this.phaseTracker = undefined
-
-		let newTracker: PhaseTracker | undefined
+		// 1) phaseTracker 가 이미 있으면 재사용, 없으면 생성
+		let newTracker: PhaseTracker
 		if (historyItem) {
-			newTracker = await PhaseTracker.fromCheckpoint(this, this.outputChannel)
-		}
-		if (!newTracker) {
+			// 체크포인트에서 복원
+			const trackerFromCheckpoint = await PhaseTracker.fromCheckpoint(this, this.outputChannel)
+			if (trackerFromCheckpoint) {
+				newTracker = trackerFromCheckpoint
+			} else {
+				// Log error and notify user about checkpoint loading failure
+				const errorMsg = "Failed to load task checkpoint. Unable to restore previous state."
+				this.outputChannel.appendLine(errorMsg)
+				vscode.window.showErrorMessage(errorMsg)
+				throw new Error(errorMsg)
+			}
+		} else if (this.phaseTracker) {
+			// 이미 메모리에 있던 tracker 재사용
+			newTracker = this.phaseTracker
+		} else {
+			// 완전 신규
 			newTracker = new PhaseTracker(task ?? "", this, this.outputChannel)
 		}
 		this.phaseTracker = newTracker
-		const isPhaseRoot = true // this is the root phase of the task, so we can set it to true
+
+		// 2) isPhaseRoot 은 “진짜 새 작업”일 때만 true
+		//    체크포인트 복원(historyItem)이거나, 기존 tracker 재사용 시에는 false
+		const isPhaseRoot = !historyItem && !this.phaseTracker.rawPlanContent
 
 		const NEW_USER_TASK_COUNT_THRESHOLD = 10
 
