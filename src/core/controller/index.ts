@@ -62,6 +62,7 @@ import { refreshWorkflowToggles } from "@core/context/instructions/user-instruct
 import { get } from "node:http"
 import p from "proxyquire"
 import { PhaseTracker } from "../assistant-message/phase-tracker"
+import { formatResponse } from "../prompts/responses"
 
 /*
 https://github.com/microsoft/vscode-webview-ui-toolkit-samples/blob/main/default/weather-webview/src/providers/WeatherViewProvider.ts
@@ -80,6 +81,9 @@ export class Controller {
 	mcpHub: McpHub
 	accountService: ClineAccountService
 	latestAnnouncementId = "may-22-2025_16:11:00" // update to some unique identifier when we add a new announcement
+
+	private phaseTaskCallbacks: Map<number, (result: string) => void> = new Map()
+	private phaseData: Map<string, any> = new Map()
 
 	constructor(
 		readonly context: vscode.ExtensionContext,
@@ -148,14 +152,13 @@ export class Controller {
 		await updateGlobalState(this.context, "userInfo", info)
 	}
 
-	
 	/**
 	 * spawnNewTask - 현재 진행 중인 Task를 완전히 종료하고,
 	 * 새 task + 새 PhaseTracker를 생성한다.
 	 */
 	public async spawnNewTask(newPrompt?: string, images?: string[]) {
 		// initTask() already clears any existing task and phase tracker
-		await this.initTask(newPrompt, images /* historyItem = undefined */)
+		await this.initTask(newPrompt, images)
 	}
 
 	async initTask(task?: string, images?: string[], files?: string[], historyItem?: HistoryItem) {
@@ -1530,6 +1533,23 @@ Commit message:`
 		this.phaseTracker = undefined // reset phase tracker
 
 		console.log("[Controller] All phases done. Final result: \n", resultSummary)
+	}
+
+	public async spawnPhaseTask(phasePrompt: string, phaseId: number): Promise<string> {
+		return new Promise((resolve) => {
+			this.phaseTaskCallbacks.set(phaseId, (result) => {
+				resolve(result)
+			})
+			this.spawnNewTask(phasePrompt)
+		})
+	}
+
+	public setPhaseData(phaseId: string, data: any): void {
+		this.phaseData.set(phaseId, data)
+	}
+
+	public getPhaseData(phaseId: string): any {
+		return this.phaseData.get(phaseId)
 	}
 
 	// dev

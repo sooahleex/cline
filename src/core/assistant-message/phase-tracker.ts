@@ -17,6 +17,7 @@ export interface Phase {
 	description?: string
 	paths: string[]
 	subtasks: Subtask[]
+	complete: boolean
 }
 
 export interface Subtask {
@@ -139,6 +140,7 @@ function createPhasesFromMatches(
 			description: subtask,
 			completed: false,
 		})),
+		complete: false,
 	}))
 
 	// // Extract tool uses to associate with phases and subtasks
@@ -206,7 +208,7 @@ export function parseSubtasksFromOutput(msg: string): {
 
 export class PhaseTracker {
 	private phases: PhaseState[] = []
-	private currentPhaseIndex = 0
+	public currentPhaseIndex = 0
 	private phaseResults: PhaseResult[] = []
 	private executionConfig: any
 	private phaseExecutionMode: PhaseExecutionMode = PhaseExecutionMode.Sequential
@@ -228,7 +230,15 @@ export class PhaseTracker {
 		this.phases.push({
 			index: 0,
 			origin_prompt: originalPrompt,
-			phase: { index: 0, phase_prompt: "Plan Phase", title: "Plan Phase", description: "", paths: [], subtasks: [] },
+			phase: {
+				index: 0,
+				phase_prompt: "Plan Phase",
+				title: "Plan Phase",
+				description: "",
+				paths: [],
+				subtasks: [],
+				complete: false,
+			},
 			subtasks: [],
 			complete: false,
 			status: "in-complete",
@@ -405,6 +415,22 @@ export class PhaseTracker {
 
 	public get currentSubtasks(): SubtaskState[] {
 		return this.phases[this.currentPhaseIndex].subtasks
+	}
+
+	public getPhaseById(id: number): Phase {
+		const phase = this.phases.find((p) => p.index === id)
+		if (!phase || !phase.phase) {
+			throw new Error(`Phase with ID ${id} not found or not properly initialized`)
+		}
+		return phase.phase
+	}
+
+	public getPhaseStateById(id: number): PhaseState {
+		const phase = this.phases.find((p) => p.index === id)
+		if (!phase) {
+			throw new Error(`Phase with ID ${id} not found`)
+		}
+		return phase
 	}
 
 	public get currentPhase(): Phase {

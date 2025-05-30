@@ -178,6 +178,7 @@ export class Task {
 	// phase tracking
 	private phaseTracker?: PhaseTracker
 	private isPhaseRoot: boolean = false
+	public newPhaseOpened: boolean = true
 
 	// streaming
 	isWaitingForFirstChunk = false
@@ -969,13 +970,10 @@ export class Task {
 			await this.clineIgnoreController.initialize()
 		} catch (error) {
 			console.error("Failed to initialize ClineIgnoreController:", error)
-			// Optionally, inform the user or handle the error appropriately
 		}
-		// conversationHistory (for API) and clineMessages (for webview) need to be in sync
-		// if the extension process were killed, then on restart the clineMessages might not be empty, so we need to set it to [] when we create a new Cline client (otherwise webview would show stale messages from previous session)
+
 		this.clineMessages = []
 		this.apiConversationHistory = []
-
 		await this.postStateToWebview()
 
 		let phaseAwarePrompt: string
@@ -989,14 +987,10 @@ export class Task {
 		}
 
 		await this.say("text", task, images)
-
 		this.isInitialized = true
 
 		let imageBlocks: Anthropic.ImageBlockParam[] = formatResponse.imageBlocks(images)
-		const userContent: UserContent = [
-			{ type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>` },
-			...imageBlocks,
-		]
+		const userContent: UserContent = [{ type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
 		if (files && files.length > 0) {
 			const fileContentString = await processFilesIntoText(files)
 			if (fileContentString) {
@@ -1007,47 +1001,127 @@ export class Task {
 			}
 		}
 
+		// Planning Phase
 		if (this.isPhaseRoot) {
-			const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userContent)
-			if (!this.phaseTracker) {
-				throw new Error("PhaseTracker not initialized")
-			}
-
-			// Add planning phases to the PhaseTracker
-			const { rawPlan, phases: planSteps } = parsePlanFromOutput(firstAssistantMessage)
-			this.phaseTracker!.rawPlanContent = rawPlan
-			this.phaseTracker.addPhasesFromPlan(planSteps)
-
-			await this.say("text", `Here is the proposed plan (Phase Plan):\n\n${rawPlan}`)
-
-			const approved = await this.askForApproval() // TODO: (sa) change to chat approve
-			if (!approved) {
-				await this.say("text", "Plan execution aborted by user.")
-				return
-			}
-
-			// Planning phase is complete, disabling root mode
-			this.isPhaseRoot = false
-
-			// Mark the first phase as complete
-			this.phaseTracker.markCurrentPhaseComplete(undefined)
-			this.sidebarController.onPhaseCompleted(this, rawPlan) // TODO: (sa) show phase result
-
-			await this.processPhases()
+			await this.executePlanningPhase(userContent)
 			return
 		}
 
-		// /* 2-B. 실행 Phase(2,3,…) : 기존 loop 사용 ---------------------------- */
-		// await this.initiateTaskLoop(userContent)
-		await this.processPhases()
+		// Execution Phase
+		await this.executeCurrentPhase()
+	}
 
-		// await this.initiateTaskLoop([
-		// 	{
-		// 		type: "text",
-		// 		text: `<task>\n${task}\n</task>`,
-		// 	},
-		// 	...imageBlocks,
-		// ])
+	public async startPhaseOnly(phaseIndex: number, images: Anthropic.ImageBlockParam[] = []): Promise<void> {
+		// 1) 초기화: clearTask() 하지 않고, 기존 PhaseTracker 그대로 재사용
+		this.isPhaseRoot = false
+
+		// 2) runSinglePhase 로 phaseIndex만 실행
+		const result = await this.runSinglePhase(phaseIndex, images)
+
+		// 3) 실행 결과를 Task UI(채팅/webview)로 보여주기
+		await this.say(
+			"text",
+			`✅ Phase ${phaseIndex + 1}/${this.phaseTracker!.totalPhases} - ${this.phaseTracker!.getPhaseById(phaseIndex).title}\n\n${result}`,
+		)
+	}
+
+	private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
+		const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
+		if (!this.phaseTracker) {
+			throw new Error("PhaseTracker not initialized")
+		}
+
+		// Add planning phases to the PhaseTracker
+		const { rawPlan, phases: planSteps } = parsePlanFromOutput(firstAssistantMessage)
+		this.phaseTracker!.rawPlanContent = rawPlan
+		this.phaseTracker.addPhasesFromPlan(planSteps)
+
+		await this.say("text", `Here is the proposed plan (Phase Plan):\n\n${rawPlan}`)
+
+		const approved = await this.askForApproval()
+		if (!approved) {
+			await this.say("text", "Plan execution aborted by user.")
+			return
+		}
+
+		// Planning phase is complete, disabling root mode
+		this.isPhaseRoot = false
+
+		// Mark the first phase as complete
+		this.phaseTracker.markCurrentPhaseComplete(undefined)
+		this.sidebarController.onPhaseCompleted(this, rawPlan)
+
+		// Start execution of the first phase
+		this.newPhaseOpened = false
+		await this.executeCurrentPhase()
+	}
+
+	private async executeCurrentPhase(images: Anthropic.ImageBlockParam[] = []): Promise<void> {
+		if (!this.phaseTracker) {
+			throw new Error("PhaseTracker not initialized")
+		}
+
+		const phase = this.phaseTracker.currentPhase
+		const total = this.phaseTracker.totalPhases
+		const title = phase.title
+		const phaseIndex = this.phaseTracker.currentPhaseIndex
+		if (!this.newPhaseOpened) {
+			await this.sidebarController.spawnPhaseTask(
+				this.buildPhasePrompt(phase, this.phaseTracker.totalPhases, this.phaseTracker.getOriginalPrompt()),
+				phaseIndex,
+			)
+		} else {
+			await this.startPhaseOnly(phaseIndex, images)
+		}
+
+		await this.say("text", `✅ Phase ${phaseIndex + 1}/${total} 완료: ${title}`)
+
+		// 2) PhaseTracker 내부 인덱스 이동
+		if (this.phaseTracker.hasNextPhase()) {
+			this.phaseTracker.moveToNextPhase()
+			this.newPhaseOpened = false
+		} else {
+			this.sidebarController.onTaskCompleted(this, "All phases completed successfully")
+		}
+	}
+
+	public async runSinglePhase(phaseIndex: number, images: Anthropic.ImageBlockParam[] = []): Promise<string> {
+		// 0) PhaseTracker 준비 확인
+		if (!this.phaseTracker) {
+			throw new Error("PhaseTracker not initialized")
+		}
+
+		// 1) Phase용 프롬프트 생성
+		const total = this.phaseTracker.totalPhases
+		const original = this.phaseTracker.getOriginalPrompt()
+		const phase = this.phaseTracker.getPhaseById(phaseIndex)
+		const prompt = this.buildPhasePrompt(phase, total, original)
+
+		// 2) UserContent 구성 (<task> 태그 + 이미지 블록)
+		const userBlocks: UserContent = [{ type: "text", text: `<task>\n${prompt}\n</task>` }, ...images]
+
+		// 3) LLM 호출: initiateTaskLoop에 captureResponse 모드로 한 번만 실행
+		//    내부에서 tool loop 전부 돌고, 마지막 assistantText를 반환합니다.
+		const assistantText = (await this.initiateTaskLoop(userBlocks, /* captureResponse= */ true)) as string
+
+		// 4) subtask별 완료 여부 파싱
+		const subtaskResults = parseSubtasksFromOutput(assistantText)
+		for (const { id, completed, note } of subtaskResults) {
+			if (completed) {
+				// PhaseTracker에 subtask 완료 표시
+				this.phaseTracker.completeSubtask(phaseIndex, id)
+				// (선택) 각 subtask 완료 시점에 UI도 띄우고 싶다면:
+				// this.sidebarController.onSubtaskCompleted(this, phaseIndex, id, note);
+			}
+		}
+
+		// 5) Phase 내 모든 subtask 완료되면 알림
+		if (phase.complete) {
+			this.sidebarController.onPhaseCompleted(this, assistantText)
+		}
+
+		// 6) 어시스턴트 응답 전체를 반환
+		return assistantText
 	}
 
 	private async askForApproval(): Promise<boolean> {
@@ -1226,7 +1300,10 @@ export class Task {
 		await this.initiateTaskLoop(newUserContent)
 	}
 
-	private async initiateTaskLoop(userContent: UserContent): Promise<void> {
+	private async initiateTaskLoop(userContent: UserContent, captureResponse = false): Promise<string | void> {
+		await this.addToApiConversationHistory({ role: "user", content: userContent })
+
+		let assistantText = ""
 		let nextUserContent = userContent
 		let includeFileDetails = true
 		while (!this.abort) {
@@ -1240,6 +1317,19 @@ export class Task {
 			if (didEndLoop) {
 				// For now a task never 'completes'. This will only happen if the user hits max requests and denies resetting the count.
 				//this.say("task_completed", `Task completed. Total API usage cost: ${totalCost}`)
+				const lastMessage = this.apiConversationHistory
+					.slice()
+					.reverse()
+					.find((m) => m.role === "assistant")
+				if (lastMessage) {
+					const text = Array.isArray(lastMessage.content)
+						? lastMessage.content
+								.filter((b: Anthropic.ContentBlockParam) => b.type === "text")
+								.map((b: Anthropic.ContentBlockParam) => (b as Anthropic.TextBlockParam).text)
+								.join("")
+						: lastMessage.content
+					assistantText += text
+				}
 				break
 			} else {
 				// this.say(
@@ -1254,6 +1344,10 @@ export class Task {
 				]
 				this.consecutiveMistakeCount++
 			}
+
+		}
+		if (captureResponse) {
+			return assistantText
 		}
 	}
 
@@ -4596,6 +4690,27 @@ export class Task {
 		Begin now.`
 	}
 
+	private async processPhasesSequentially(imageBlocks: Anthropic.ImageBlockParam[] = []): Promise<void> {
+		if (!this.phaseTracker) return
+
+		const total = this.phaseTracker.totalPhases
+		for (let phaseIndex = 1; phaseIndex < total; phaseIndex++) {
+			// Phase 메타 가져오기
+			const phase = this.phaseTracker.getPhaseById(phaseIndex)
+			const title = phase.title // PhaseState 객체 구조에 맞춰
+			const original = this.phaseTracker.getOriginalPrompt()
+
+			// 시작 알림
+			await this.say("text", `🚀 Starting Phase ${phaseIndex}/${total}: ${title}`)
+
+			// 해당 Phase만 실행
+			const resultText = await this.runSinglePhase(phaseIndex, imageBlocks)
+
+			// 완료 알림 (원하는 만큼 결과도 함께)
+			await this.say("text", `✅ Completed Phase ${phaseIndex}/${total}: ${title}\n\n${resultText}`)
+		}
+	}
+
 	private async processPhases(): Promise<boolean> {
 		// If the phase tracker is not initialized, return false
 		if (!this.phaseTracker) {
@@ -4869,28 +4984,21 @@ export class Task {
 			}
 
 			// reset streaming state
-			this.resetStreamingState()
+			this.currentStreamingContentIndex = 0
+			this.assistantMessageContent = []
+			this.didCompleteReadingStream = false
+			this.userMessageContent = []
+			this.userMessageContentReady = false
+			this.didRejectTool = false
+			this.didAlreadyUseTool = false
+			this.presentAssistantMessageLocked = false
+			this.presentAssistantMessageHasPendingUpdates = false
+			this.didAutomaticallyRetryFailedApiRequest = false
 			await this.diffViewProvider.reset()
 
-			// Make initial API request
 			const stream = this.attemptApiRequest(previousApiReqIndex) // yields only if the first chunk is successful, otherwise will allow the user to retry the request (most likely due to rate limit error, which gets thrown on the first chunk)
 			let assistantMessage = ""
 			let reasoningMessage = ""
-			const processingResult = await this.processApiStream(
-				stream,
-				updateApiReqMsg,
-				abortStream,
-				inputTokens,
-				outputTokens,
-				cacheWriteTokens,
-				cacheReadTokens,
-				totalCost,
-			)
-
-			if (!processingResult) {
-				return true // Stream was aborted, end the loop
-			}
-
 			this.isStreaming = true
 			let didReceiveUsageChunk = false
 			try {
@@ -5011,14 +5119,6 @@ export class Task {
 				this.presentAssistantMessage() // if there is content to update then it will complete and update this.userMessageContentReady to true, which we pwaitfor before making the next request. all this is really doing is presenting the last partial message that we just set to complete
 			}
 
-			assistantMessage = processingResult.assistantMessage
-			reasoningMessage = processingResult.reasoningMessage
-			inputTokens = processingResult.inputTokens
-			outputTokens = processingResult.outputTokens
-			cacheWriteTokens = processingResult.cacheWriteTokens
-			cacheReadTokens = processingResult.cacheReadTokens
-			totalCost = processingResult.totalCost
-
 			updateApiReqMsg()
 			await this.saveClineMessagesAndUpdateHistory()
 			await this.postStateToWebview()
@@ -5039,12 +5139,6 @@ export class Task {
 					role: "assistant",
 					content: [{ type: "text", text: assistantMessage }],
 				})
-
-				// Process phases using a separate method
-				const didEndLoop = await this.processPhases()
-				if (didEndLoop) {
-					return true
-				}
 
 				// NOTE: this comment is here for future reference - this was a workaround for userMessageContent not getting set to true. It was due to it not recursively calling for partial blocks when didRejectTool, so it would get stuck waiting for a partial block to complete before it could continue.
 				// in case the content blocks finished
@@ -5069,7 +5163,7 @@ export class Task {
 				}
 
 				const recDidEndLoop = await this.recursivelyMakeClineRequests(this.userMessageContent)
-				return recDidEndLoop
+				didEndLoop = recDidEndLoop
 			} else {
 				// if there's no assistant_responses, that means we got no text or tool_use content blocks from API which we should assume is an error
 				await this.say(
@@ -5085,8 +5179,9 @@ export class Task {
 						},
 					],
 				})
-				return false
 			}
+
+			return didEndLoop // will always be false for now
 		} catch (error) {
 			// this should never happen since the only thing that can throw an error is the attemptApiRequest, which is wrapped in a try catch that sends an ask where if noButtonClicked, will clear current task and destroy this instance. However to avoid unhandled promise rejection, we will end this loop which will end execution of this instance (see startTask)
 			return true // needs to be true so parent loop knows to end task
@@ -5361,5 +5456,26 @@ export class Task {
 		}
 
 		return `<environment_details>\n${details.trim()}\n</environment_details>`
+	}
+
+	// Add new method to handle phase task completion
+	public async onPhaseTaskComplete(phaseId: string, result: string): Promise<void> {
+		if (!this.phaseTracker) {
+			throw new Error("PhaseTracker not initialized")
+		}
+
+		// Process the phase result
+		const subtaskResults = parseSubtasksFromOutput(result)
+		for (const { id, completed } of subtaskResults) {
+			if (completed) {
+				this.phaseTracker.completeSubtask(this.phaseTracker.currentPhase.index, id)
+			}
+		}
+
+		// Store phase data for potential use in later phases
+		this.sidebarController.setPhaseData(phaseId, {
+			result,
+			completedSubtasks: subtaskResults.filter((s) => s.completed).map((s) => s.id),
+		})
 	}
 }
