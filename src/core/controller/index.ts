@@ -1511,7 +1511,7 @@ Commit message:`
 		outputChannel.appendLine("All phases completed.")
 	}
 
-	public async onPhaseCompleted(task: Task, rawPlan: string): Promise<void> {
+	public async onPhaseCompleted(task: Task, rawPlan: string = "", openNewTask: boolean = false): Promise<void> {
 		const tracker = task.getPhaseTracker?.() || this.phaseTracker
 		if (!tracker) {
 			return
@@ -1519,7 +1519,7 @@ Commit message:`
 
 		if (tracker.hasNextPhase()) {
 			await tracker
-				.moveToNextPhase(rawPlan)
+				.moveToNextPhase(rawPlan, openNewTask)
 				.catch((err) => this.outputChannel.appendLine(`Error moving to next phase: ${err}`))
 		}
 		if (tracker.isAllComplete()) {

@@ -179,7 +179,8 @@ function createPhasesFromMatches(
 }
 
 export function parsePlanFromOutput(raw: string): ParsedPlan {
-	const planRegex = /^#{1,6}\s*Phase\s*Plan\s*[\r\n]+```[\r\n]?([\s\S]*?)```/im
+	// const planRegex = /^#{1,6}\s*Phase\s*Plan\s*[\r\n]+```[\r\n]?([\s\S]*?)```/im
+	const planRegex = /##\s*Phase\s*Plan\s*[\r\n]+([\s\S]*)$/im;
 	const planMatch = planRegex.exec(raw)
 	if (!planMatch) {
 		throw new Error("No Phase Plan section found in the input text")
@@ -324,7 +325,7 @@ export class PhaseTracker {
 		return this.currentPhaseIndex < this.phases.length - 1
 	}
 
-	public async moveToNextPhase(rawPlan?: string): Promise<string | null> {
+	public async moveToNextPhase(rawPlan: string, openNewTask: boolean=false): Promise<void> {
 		const current = this.phases[this.currentPhaseIndex]
 		if (!current.complete) {
 			this.completePhase(current.index, rawPlan || "", [])
@@ -332,80 +333,69 @@ export class PhaseTracker {
 		this.currentPhaseIndex++
 		if (this.currentPhaseIndex >= this.phases.length) {
 			this.outputChannel.appendLine(`PhaseTracker: All phases completed.`)
-			return null
 		}
 		const next = this.phases[this.currentPhaseIndex]
 		next.status = "in-progress"
 		next.startTime = Date.now()
-		const prompt = rawPlan
-			? [
-					`# Whole Plan`,
-					rawPlan,
-					``,
-					`# Current Phase (${next.index}/${this.phases.length}):`,
-					next.phase?.phase_prompt,
-				].join("\n")
-			: next.phase?.phase_prompt
 
-		if (!prompt) {
-			this.outputChannel.appendLine(`PhaseTracker: No prompt available for Phase ${next.index}.`)
-		}
 		this.notifyPhaseChange(next.index, "in-progress")
 		this.outputChannel.appendLine(`PhaseTracker: \Starting Phase ${next.index}: "${next.phase?.phase_prompt}"`)
 		await this.controller.clearTask()
-		await this.controller.postStateToWebview()
-		await this.controller.postMessageToWebview({ type: "action", action: "chatButtonClicked" })
-		await this.controller.postMessageToWebview({ type: "action", action: "focusChatInput", text: prompt })
-
-		return prompt ?? null
-	}
-
-	public async executeAll(): Promise<void> {
-		switch (this.phaseExecutionMode) {
-			case PhaseExecutionMode.Sequential:
-				await this.executeSequentially()
-				break
-			case PhaseExecutionMode.Parallel:
-				await this.executeParallel()
-				break
-			case PhaseExecutionMode.Contional:
-				await this.executeConditionally()
-				break
+		if (openNewTask) {
+			await this.controller.spawnPhaseTask(rawPlan, next.index)
+		} else {
+			await this.controller.postStateToWebview()
+			await this.controller.postMessageToWebview({ type: "action", action: "chatButtonClicked" })
+			await this.controller.postMessageToWebview({ type: "action", action: "focusChatInput", text: rawPlan })
 		}
 	}
 
-	private async executeSequentially(): Promise<void> {
-		while (this.hasNextPhase()) {
-			await this.moveToNextPhase()
-		}
-	}
+	// public async executeAll(): Promise<void> {
+	// 	switch (this.phaseExecutionMode) {
+	// 		case PhaseExecutionMode.Sequential:
+	// 			await this.executeSequentially()
+	// 			break
+	// 		case PhaseExecutionMode.Parallel:
+	// 			await this.executeParallel()
+	// 			break
+	// 		case PhaseExecutionMode.Contional:
+	// 			await this.executeConditionally()
+	// 			break
+	// 	}
+	// }
 
-	private async executeParallel(): Promise<void> {
-		const groups: number[][] = []
-		const pending = new Set(this.phases.map((p) => p.index))
-		while (pending.size) {
-			const group: number[] = []
-			for (const id of pending) {
-				const phase = this.phases.find((p) => p.index === id)!
-			}
-			group.forEach((id) => pending.delete(id))
-			await Promise.all(group.map((id) => this.completePhase(id)))
-		}
-	}
+	// private async executeSequentially(): Promise<void> {
+	// 	while (this.hasNextPhase()) {
+	// 		await this.moveToNextPhase()
+	// 	}
+	// }
 
-	private async executeConditionally(): Promise<void> {
-		const { conditions = {}, defaultAction = "execute" } = this.executionConfig
-		for (const phase of this.phases) {
-			const should = conditions[phase.index] ? await conditions[phase.index]() : defaultAction === "execute"
-			if (should) {
-				await this.completePhase(phase.index)
-			} else {
-				phase.status = "skipped"
-				phase.complete = true
-				this.notifyPhaseChange(phase.index, "skipped")
-			}
-		}
-	}
+	// private async executeParallel(): Promise<void> {
+	// 	const groups: number[][] = []
+	// 	const pending = new Set(this.phases.map((p) => p.index))
+	// 	while (pending.size) {
+	// 		const group: number[] = []
+	// 		for (const id of pending) {
+	// 			const phase = this.phases.find((p) => p.index === id)!
+	// 		}
+	// 		group.forEach((id) => pending.delete(id))
+	// 		await Promise.all(group.map((id) => this.completePhase(id)))
+	// 	}
+	// }
+
+	// private async executeConditionally(): Promise<void> {
+	// 	const { conditions = {}, defaultAction = "execute" } = this.executionConfig
+	// 	for (const phase of this.phases) {
+	// 		const should = conditions[phase.index] ? await conditions[phase.index]() : defaultAction === "execute"
+	// 		if (should) {
+	// 			await this.completePhase(phase.index)
+	// 		} else {
+	// 			phase.status = "skipped"
+	// 			phase.complete = true
+	// 			this.notifyPhaseChange(phase.index, "skipped")
+	// 		}
+	// 	}
+	// }
 
 	public onPhaseChange(
 		listener: (phaseId: number, status: PhaseStatus | "in-progress" | "completed" | "skipped") => void,

@@ -47,7 +47,7 @@ export async function getShadowGitPath(globalStoragePath: string, taskId: string
 export async function getWorkingDirectory(): Promise<string> {
 	// First try to get the workspace folder
 	const cwd = vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath).at(0)
-	
+
 	// If we have a workspace folder, validate it
 	if (cwd) {
 		// Check if directory exists and we have read permissions
@@ -61,8 +61,8 @@ export async function getWorkingDirectory(): Promise<string> {
 	} else {
 		// No workspace folder found, but we don't want to break the checkpoints feature
 		// Instead, use a fallback directory (user's temp directory)
-		const tempDir = path.join(os.tmpdir(), 'cline-checkpoints')
-		
+		const tempDir = path.join(os.tmpdir(), "cline-checkpoints")
+
 		// Create the directory if it doesn't exist
 		try {
 			await mkdir(tempDir, { recursive: true })
@@ -70,7 +70,7 @@ export async function getWorkingDirectory(): Promise<string> {
 			return tempDir
 		} catch (error) {
 			throw new Error(
-				`Failed to create temporary directory for checkpoints. Error: ${error instanceof Error ? error.message : String(error)}`
+				`Failed to create temporary directory for checkpoints. Error: ${error instanceof Error ? error.message : String(error)}`,
 			)
 		}
 	}
