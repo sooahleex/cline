@@ -2,7 +2,6 @@ import { Anthropic } from "@anthropic-ai/sdk"
 import { PROMPTS } from "../../core/assistant-message/prompts"
 import OpenAI from "openai"
 
-
 export function convertToOpenAiMessages(
 	anthropicMessages: Anthropic.Messages.MessageParam[],
 ): OpenAI.Chat.ChatCompletionMessageParam[] {

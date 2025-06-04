@@ -1046,7 +1046,8 @@ export class Task {
 
 		await this.say("text", `Here is the proposed plan (Phase Plan):\n\n${rawPlan}`)
 
-		const approved = await this.askForApproval() // TODO: (sa)
+		// const approved = await this.askForApproval() // TODO: (sa)
+		const approved = await this.askUserApproval("ask_question", "Do you approve this Phase Plan and want to proceed?")
 		if (!approved) {
 			await this.say("text", "Plan execution aborted by user.")
 			return
@@ -1074,7 +1075,7 @@ export class Task {
 		const phaseIndex = this.phaseTracker.currentPhaseIndex
 		const currentPhasePrompt = buildPhasePrompt(phase, total, this.phaseTracker.getOriginalPrompt())
 		if (!this.newPhaseOpened) {
-			await this.sidebarController.spawnPhaseTask(currentPhasePrompt,phaseIndex)
+			await this.sidebarController.spawnPhaseTask(currentPhasePrompt, phaseIndex)
 		} else {
 			await this.startPhaseOnly(phaseIndex, currentPhasePrompt)
 		}
@@ -1098,10 +1099,10 @@ export class Task {
 			throw new Error("PhaseTracker not initialized")
 		}
 
-		const userBlocks: UserContent = [{ type: "text", text: `<task>\n${currentPhasePrompt}\n</task>`}]
+		const userBlocks: UserContent = [{ type: "text", text: `<task>\n${currentPhasePrompt}\n</task>` }]
 
 		const phaseFinished = await this.initiateTaskLoop(userBlocks)
-		
+
 		// 4) subtask별 완료 여부 파싱
 		// const subtaskResults = parseSubtasksFromOutput(assistantText)
 		// for (const { id, completed, note } of subtaskResults) {
@@ -1112,7 +1113,7 @@ export class Task {
 		// 		// this.sidebarController.onSubtaskCompleted(this, phaseIndex, id, note);
 		// 	}
 		// }
-		if (phaseFinished){
+		if (phaseFinished) {
 			const id = 0
 			this.phaseTracker.completeSubtask(phaseIndex, id)
 		}
@@ -1128,7 +1129,8 @@ export class Task {
 		// this.executeCurrentPhase()
 	}
 
-	private async askForApproval(): Promise<boolean> { // TODO: (sa)
+	private async askForApproval(): Promise<boolean> {
+		// TODO: (sa)
 		const choice = await vscode.window.showInformationMessage(
 			"Do you approve this Phase Plan and want to proceed?",
 			{ modal: true },
@@ -1136,6 +1138,16 @@ export class Task {
 			"No",
 		)
 		return choice === "Yes"
+	}
+
+	async askUserApproval(type: ClineAsk, partialMessage?: string): Promise<boolean> {
+		const { response, text, images, files } = await this.ask(type, partialMessage)
+		if (response !== "yesButtonClicked") {
+			return false
+		} else {
+			await this.saveCheckpoint()
+			return true
+		}
 	}
 
 	private async resumeTaskFromHistory() {
@@ -1304,7 +1316,7 @@ export class Task {
 		await this.initiateTaskLoop(newUserContent)
 	}
 
-	private async initiateTaskLoop(userContent: UserContent): Promise< boolean | void> {
+	private async initiateTaskLoop(userContent: UserContent): Promise<boolean | void> {
 		await this.addToApiConversationHistory({ role: "user", content: userContent })
 
 		let nextUserContent = userContent
@@ -1317,7 +1329,7 @@ export class Task {
 			// There is a MAX_REQUESTS_PER_TASK limit to prevent infinite requests, but Cline is prompted to finish the task as efficiently as he can.
 
 			//const totalCost = this.calculateApiCost(totalInputTokens, totalOutputTokens)
-			if (this.phaseFinished){
+			if (this.phaseFinished) {
 				return true
 			}
 			if (didEndLoop) {
@@ -4318,19 +4330,26 @@ export class Task {
 								}
 
 								// we already sent completion_result says, an empty string asks relinquishes control over button and field
-								let response: string | undefined;
-								let text: string | undefined;
-								let images: string[] | undefined;
-								let completionFiles: string[] | undefined;
+								let response: string | undefined
+								let text: string | undefined
+								let images: string[] | undefined
+								let completionFiles: string[] | undefined
 
-								if (this.phaseFinished && !this.phaseTracker?.isAllComplete()) { // TODO: (sa)
+								if (this.phaseFinished && !this.phaseTracker?.isAllComplete()) {
+									// TODO: (sa)
 									this.sidebarController.onPhaseCompleted(this, "", /* openNewTask */ true)
-									// const next_prompt = this.phaseTracker?.moveToNextPhase()
 
 									const phase = this.phaseTracker?.currentPhase
 									const total = this.phaseTracker?.totalPhases
-									const nexPhasePrompt = phase ? buildPhasePrompt(phase, total ?? 1, this.phaseTracker?.getOriginalPrompt() || "") : "";
-									const { response, text, images, files: newTaskFiles } = await this.ask("new_task", nexPhasePrompt, false)
+									const nexPhasePrompt = phase
+										? buildPhasePrompt(phase, total ?? 1, this.phaseTracker?.getOriginalPrompt() || "")
+										: ""
+									const {
+										response,
+										text,
+										images,
+										files: newTaskFiles,
+									} = await this.ask("new_task", nexPhasePrompt, false)
 
 									await this.say("user_feedback", text ?? "", images, completionFiles)
 									await this.saveCheckpoint()
@@ -4353,9 +4372,6 @@ export class Task {
 										break
 									}
 								}
-
-
-
 
 								const toolResults: (Anthropic.TextBlockParam | Anthropic.ImageBlockParam)[] = []
 								if (commandResult) {

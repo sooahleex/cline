@@ -1459,59 +1459,7 @@ Commit message:`
 		}
 	}
 
-	public async runPhasesSequentially(phases: string[], originalPrompt: string, outputChannel: vscode.OutputChannel) {
-		outputChannel.appendLine("Starting ${phases.length} phases...")
-		for (let i = 0; i < phases.length; i++) {
-			const phasePrompt = phases[i]
-			outputChannel.appendLine(`Running phase ${i + 1}/${phases.length}: ${phasePrompt}`)
-			// create a brand-new Task instance for each phase
-			const {
-				apiConfiguration,
-				customInstructions,
-				autoApprovalSettings,
-				browserSettings,
-				chatSettings,
-				shellIntegrationTimeout,
-				enableCheckpointsSetting,
-			} = await getAllExtensionState(this.context)
-
-			const phaseTask = new Task(
-				this.context,
-				this.mcpHub,
-				this.workspaceTracker,
-				(history) => this.updateTaskHistory(history),
-				() => this.postStateToWebview(),
-				(message) => this.postMessageToWebview(message),
-				(taskId) => this.reinitExistingTaskFromId(taskId),
-				() => this.cancelTask(),
-				apiConfiguration,
-				autoApprovalSettings,
-				browserSettings,
-				chatSettings,
-				this, // pass controller so Task can callback to runPhasesSequentially if needed
-				this.outputChannel, // same outputChannel
-				this.phaseTracker!,
-				false,
-				shellIntegrationTimeout ?? 30000, // Add shellIntegrationTimeout parameter
-				enableCheckpointsSetting ?? true, // Add enableCheckpointsSetting parameter
-				customInstructions,
-				phasePrompt, // this is the task text for this phase
-				undefined, // no images for this phase
-				undefined, // no historyItem for this phase
-			)
-
-			// wait for this phase to fully complete before moving on
-			// (our patched Task.startTask will return only after the phase's loop has ended)
-			await pWaitFor(() => phaseTask.didFinishAbortingStream || phaseTask.abandoned === false, {
-				timeout: 3_000,
-				interval: 1000,
-			})
-			outputChannel.appendLine(`Phase ${i + 1} completed.`)
-		}
-		outputChannel.appendLine("All phases completed.")
-	}
-
-	public async onPhaseCompleted(task: Task, rawPlan: string = "", openNewTask: boolean = false): Promise<void> {
+	public async onPhaseCompleted(task: Task,  openNewTask: boolean = false): Promise<void> {
 		const tracker = task.getPhaseTracker?.() || this.phaseTracker
 		if (!tracker) {
 			return
@@ -1519,20 +1467,18 @@ Commit message:`
 
 		if (tracker.hasNextPhase()) {
 			await tracker
-				.moveToNextPhase(rawPlan, openNewTask)
+				.moveToNextPhase(openNewTask)
 				.catch((err) => this.outputChannel.appendLine(`Error moving to next phase: ${err}`))
 		}
 		if (tracker.isAllComplete()) {
-			await this.onTaskCompleted(task, rawPlan)
+			await this.onTaskCompleted()
 		}
 	}
 
-	public async onTaskCompleted(task: Task, resultSummary: string): Promise<void> {
-		// this is called when the task is completed, so we can do any cleanup or finalization here
+	public async onTaskCompleted(): Promise<void> {
 		vscode.window.showInformationMessage("🎉 All phases finished!")
+		// this.say("🎉 All phases finished!")
 		this.phaseTracker = undefined // reset phase tracker
-
-		console.log("[Controller] All phases done. Final result: \n", resultSummary)
 	}
 
 	public async spawnPhaseTask(phasePrompt: string, phaseId: number): Promise<string> {
@@ -1546,10 +1492,6 @@ Commit message:`
 
 	public setPhaseData(phaseId: string, data: any): void {
 		this.phaseData.set(phaseId, data)
-	}
-
-	public getPhaseData(phaseId: string): any {
-		return this.phaseData.get(phaseId)
 	}
 
 	// dev

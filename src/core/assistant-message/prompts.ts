@@ -1,7 +1,7 @@
 import { Phase, Subtask } from "./phase-tracker"
 
 export const PROMPTS = {
-    PLANNING: `**Step 1:** First, analyze the user's request and produce your \`assistantMessage\` using the following tags:
+	PLANNING: `**Step 1:** First, analyze the user's request and produce your \`assistantMessage\` using the following tags:
 1. \`<thinking>…</thinking>\` - Explain your overall approach and reasoning
 2. \`<execute_command>…</execute_command>\` - Any commands to be executed  
 3. \`<write_to_file>…</write_to_file>\` - File creation or modification actions
@@ -86,39 +86,39 @@ Always add a clear divider between your assistantMessage and the Phase Plan. Be 
  * @param originalPrompt The very first user request – shown verbatim for context
  */
 export function buildPhasePrompt(phase: Phase, total: number, originalPrompt: string): string {
-    // Helper: pretty-print the path list (can be empty)
-    const pathsSection = phase.paths?.length > 0 ? phase.paths?.join("\n") : "(no specific files yet)"
+	// Helper: pretty-print the path list (can be empty)
+	const pathsSection = phase.paths?.length > 0 ? phase.paths?.join("\n") : "(no specific files yet)"
 
-    // Helper: numbered sub-tasks (guaranteed at least one – but be defensive)
-    const subtasksSection = phase.subtasks.length
-        ? phase.subtasks.map((st: Subtask, i: number) => `${i + 1}. ${st.description.trim()}`).join("\n")
-        : "1. (no explicit sub-tasks – use your best judgement)"
+	// Helper: numbered sub-tasks (guaranteed at least one – but be defensive)
+	const subtasksSection = phase.subtasks.length
+		? phase.subtasks.map((st: Subtask, i: number) => `${i + 1}. ${st.description.trim()}`).join("\n")
+		: "1. (no explicit sub-tasks – use your best judgement)"
 
-    // Final prompt -------------------------------------------------------------
-    return `### Phase ${phase.index} / ${total-1}  –  ${phase.phase_prompt} // except planning phase in total
-    You are resuming a multi-phase task.  
-    **Overall user goal** (for reference, do *not* re-plan):
-    ────────────────────────────────────────  
-    ${originalPrompt.trim()}  
-    ────────────────────────────────────────  
-    ## Objective of this phase
-    Complete every sub-task listed below **and nothing else**.
-    ## Relevant paths / artifacts
-    ${pathsSection}
-    ## Sub-tasks to carry out in this phase
-    ${subtasksSection}
-    ---
-    ### Tool-use rules for *execution* phases
-    1. **Do not** create new high-level phases or plans.  
-    2. Use the built-in tools (\`<write_to_file>\`, \`<execute_command>\`, …) to accomplish the sub-tasks.  
-    3. After each tool call, wait for the tool result before issuing another call.  
-    4. When **all** listed sub-tasks are finished, wrap up with  
-    \`\`\`
-    <attempt_completion>
-    {concise summary of what was done and where the outputs are}
-    </attempt_completion>
-    \`\`\`  
-    If you realise a prerequisite is missing, briefly explain it inside \`<thinking>\` **before** taking action.  
-    Only proceed when you are confident the current phase can be completed.
-    Begin now.`
+	// Final prompt -------------------------------------------------------------
+	return `### Phase ${phase.index} / ${total - 1}  –  ${phase.phase_prompt} // except planning phase in total
+You are resuming a multi-phase task.  
+**Overall user goal** (for reference, do *not* re-plan):
+────────────────────────────────────────  
+${originalPrompt.trim()}  
+────────────────────────────────────────  
+## Objective of this phase
+Complete every sub-task listed below **and nothing else**.
+## Relevant paths / artifacts
+${pathsSection}
+## Sub-tasks to carry out in this phase
+${subtasksSection}
+---
+### Tool-use rules for *execution* phases
+1. **Do not** create new high-level phases or plans.  
+2. Use the built-in tools (\`<write_to_file>\`, \`<execute_command>\`, …) to accomplish the sub-tasks.  
+3. After each tool call, wait for the tool result before issuing another call.  
+4. When **all** listed sub-tasks are finished, wrap up with  
+\`\`\`
+<attempt_completion>
+{concise summary of what was done and where the outputs are}
+</attempt_completion>
+\`\`\`  
+If you realise a prerequisite is missing, briefly explain it inside \`<thinking>\` **before** taking action.  
+Only proceed when you are confident the current phase can be completed.
+Begin now.`
 }

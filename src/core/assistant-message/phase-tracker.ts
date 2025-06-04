@@ -119,7 +119,6 @@ export function parsePhases(rawPlan: string): Phase[] {
 	return []
 }
 
-
 function createPhasesFromMatches(
 	phaseMatches: {
 		index: number
@@ -149,7 +148,7 @@ function createPhasesFromMatches(
 
 export function parsePlanFromOutput(raw: string): ParsedPlan {
 	// const planRegex = /^#{1,6}\s*Phase\s*Plan\s*[\r\n]+```[\r\n]?([\s\S]*?)```/im
-	const planRegex = /##\s*Phase\s*Plan\s*[\r\n]+([\s\S]*)$/im;
+	const planRegex = /##\s*Phase\s*Plan\s*[\r\n]+([\s\S]*)$/im
 	const planMatch = planRegex.exec(raw)
 	if (!planMatch) {
 		throw new Error("No Phase Plan section found in the input text")
@@ -287,17 +286,16 @@ export class PhaseTracker {
 		if (this.checkpointEnabled && this.checkpointFrequency === "phase") {
 			this.saveCheckpoint()
 		}
-
 	}
 
 	public hasNextPhase(): boolean {
 		return this.currentPhaseIndex < this.phaseStates.length - 1
 	}
 
-	public async moveToNextPhase(rawPlan: string, openNewTask: boolean=false): Promise<void> {
+	public async moveToNextPhase(openNewTask: boolean = false): Promise<void> {
 		const current = this.phaseStates[this.currentPhaseIndex]
 		if (!current.complete) {
-			this.completePhase(current.index, rawPlan || "")
+			this.completePhase(current.index)
 		}
 		this.currentPhaseIndex++
 		// PhaseTracker: All phases completed.
@@ -316,7 +314,7 @@ export class PhaseTracker {
 			await this.controller.spawnPhaseTask(nextPhasePrompt, next.index)
 		} else {
 			await this.controller.postStateToWebview()
-			await this.controller.postMessageToWebview({ type: "action", action: "focusChatInput", text: rawPlan })
+			await this.controller.postMessageToWebview({ type: "action", action: "focusChatInput"})
 		}
 	}
 
@@ -416,11 +414,7 @@ export class PhaseTracker {
 			const encoder = new TextEncoder()
 			await vscode.workspace.fs.writeFile(tmpUri, encoder.encode(content))
 			await vscode.workspace.fs.rename(tmpUri, checkpointUri, { overwrite: true })
-
-
-		} catch (error) {
-
-		}
+		} catch (error) {}
 	}
 
 	/** Restore tracker progress from .cline/phase-checkpoint.json if present */
