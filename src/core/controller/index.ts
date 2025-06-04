@@ -62,7 +62,6 @@ import { refreshWorkflowToggles } from "@core/context/instructions/user-instruct
 import { get } from "node:http"
 import p from "proxyquire"
 import { PhaseTracker } from "../assistant-message/phase-tracker"
-import { formatResponse } from "../prompts/responses"
 
 /*
 https://github.com/microsoft/vscode-webview-ui-toolkit-samples/blob/main/default/weather-webview/src/providers/WeatherViewProvider.ts
@@ -1459,7 +1458,7 @@ Commit message:`
 		}
 	}
 
-	public async onPhaseCompleted(task: Task,  openNewTask: boolean = false): Promise<void> {
+	public async onPhaseCompleted(task: Task, openNewTask: boolean = false): Promise<void> {
 		const tracker = task.getPhaseTracker?.() || this.phaseTracker
 		if (!tracker) {
 			return

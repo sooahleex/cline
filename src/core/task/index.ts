@@ -110,7 +110,7 @@ import { isInTestMode } from "../../services/test/TestMode"
 import { processFilesIntoText } from "@integrations/misc/extract-text"
 import { featureFlagsService } from "@services/posthog/feature-flags/FeatureFlagsService"
 import { StreamingJsonReplacer, ChangeLocation } from "@core/assistant-message/diff-json"
-import { PhaseTracker, parsePlanFromOutput, parseSubtasksFromOutput } from "../assistant-message/phase-tracker"
+import { PhaseTracker, parsePlanFromOutput } from "../assistant-message/phase-tracker"
 import { PROMPTS, buildPhasePrompt } from "../assistant-message/prompts"
 import { Controller } from "../controller"
 import { parse } from "node:path"
@@ -998,7 +998,6 @@ export class Task {
 		} else {
 			userContent = [{ type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
 		}
-		// const userContent: UserContent = [{ type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
 		if (files && files.length > 0) {
 			const fileContentString = await processFilesIntoText(files)
 			if (fileContentString) {
@@ -1012,25 +1011,10 @@ export class Task {
 		// Planning Phase
 		if (this.isPhaseRoot) {
 			await this.executePlanningPhase(userContent)
-			return
 		}
 
 		// Execution Phase
 		await this.executeCurrentPhase()
-	}
-
-	public async startPhaseOnly(phaseIndex: number, currentPhasePrompt: string): Promise<void> {
-		// 1) 초기화: clearTask() 하지 않고, 기존 PhaseTracker 그대로 재사용
-		this.isPhaseRoot = false
-
-		// 2) runSinglePhase 로 phaseIndex만 실행
-		await this.runSinglePhase(phaseIndex, currentPhasePrompt)
-
-		// 3) 실행 결과를 Task UI(채팅/webview)로 보여주기
-		// await this.say(
-		// 	"text",
-		// 	`✅ Phase ${phaseIndex + 1}/${this.phaseTracker!.totalPhases} - ${this.phaseTracker!.getPhaseById(phaseIndex).title}\n\n${result}`,
-		// )
 	}
 
 	private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
@@ -1046,7 +1030,6 @@ export class Task {
 
 		await this.say("text", `Here is the proposed plan (Phase Plan):\n\n${rawPlan}`)
 
-		// const approved = await this.askForApproval() // TODO: (sa)
 		const approved = await this.askUserApproval("ask_question", "Do you approve this Phase Plan and want to proceed?")
 		if (!approved) {
 			await this.say("text", "Plan execution aborted by user.")
@@ -1058,7 +1041,7 @@ export class Task {
 
 		// Mark the first phase as complete
 		this.phaseTracker.markCurrentPhaseComplete(undefined)
-		this.sidebarController.onPhaseCompleted(this, rawPlan)
+		this.sidebarController.onPhaseCompleted(this)
 
 		// Start execution of the first phase
 		this.newPhaseOpened = false
@@ -1077,24 +1060,18 @@ export class Task {
 		if (!this.newPhaseOpened) {
 			await this.sidebarController.spawnPhaseTask(currentPhasePrompt, phaseIndex)
 		} else {
-			await this.startPhaseOnly(phaseIndex, currentPhasePrompt)
+			this.isPhaseRoot = false
+			await this.runSinglePhase(phaseIndex, currentPhasePrompt)
 		}
-
-		// await this.say("text", `✅ Phase ${phaseIndex + 1}/${total} 완료: ${title}`)
-
-		// 2) PhaseTracker 내부 인덱스 이동
-		// if (this.phaseTracker.hasNextPhase()) {
-		// 	this.phaseTracker.moveToNextPhase()
-		// 	this.newPhaseOpened = false
-		// } else {
-		// 	this.sidebarController.onTaskCompleted(this, "All phases completed successfully")
-		// }
 		this.newPhaseOpened = false
+		if (this.phaseTracker.isAllComplete()) {
+			await this.say("text", "All phases completed successfully!")
+			this.sidebarController.onTaskCompleted()
+		}
 		this.executeCurrentPhase()
 	}
 
 	public async runSinglePhase(phaseIndex: number, currentPhasePrompt: string): Promise<void> {
-		// 0) PhaseTracker 준비 확인
 		if (!this.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
@@ -1102,42 +1079,14 @@ export class Task {
 		const userBlocks: UserContent = [{ type: "text", text: `<task>\n${currentPhasePrompt}\n</task>` }]
 
 		const phaseFinished = await this.initiateTaskLoop(userBlocks)
-
-		// 4) subtask별 완료 여부 파싱
-		// const subtaskResults = parseSubtasksFromOutput(assistantText)
-		// for (const { id, completed, note } of subtaskResults) {
-		// 	if (completed) {
-		// 		// PhaseTracker에 subtask 완료 표시
-		// 		this.phaseTracker.completeSubtask(phaseIndex, id)
-		// 		// (선택) 각 subtask 완료 시점에 UI도 띄우고 싶다면:
-		// 		// this.sidebarController.onSubtaskCompleted(this, phaseIndex, id, note);
-		// 	}
-		// }
 		if (phaseFinished) {
 			const id = 0
 			this.phaseTracker.completeSubtask(phaseIndex, id)
 		}
 
-		// 5) Phase 내 모든 subtask 완료되면 알림
-		const assistantText = ""
-		// if (phase.complete) {
 		if (phaseFinished) {
-			this.sidebarController.onPhaseCompleted(this, assistantText)
+			this.sidebarController.onPhaseCompleted(this)
 		}
-
-		// 6) 어시스턴트 응답 전체를 반환
-		// this.executeCurrentPhase()
-	}
-
-	private async askForApproval(): Promise<boolean> {
-		// TODO: (sa)
-		const choice = await vscode.window.showInformationMessage(
-			"Do you approve this Phase Plan and want to proceed?",
-			{ modal: true },
-			"Yes",
-			"No",
-		)
-		return choice === "Yes"
 	}
 
 	async askUserApproval(type: ClineAsk, partialMessage?: string): Promise<boolean> {
@@ -4337,7 +4286,7 @@ export class Task {
 
 								if (this.phaseFinished && !this.phaseTracker?.isAllComplete()) {
 									// TODO: (sa)
-									this.sidebarController.onPhaseCompleted(this, "", /* openNewTask */ true)
+									this.sidebarController.onPhaseCompleted(this, /* openNewTask */ true)
 
 									const phase = this.phaseTracker?.currentPhase
 									const total = this.phaseTracker?.totalPhases
@@ -5372,26 +5321,5 @@ export class Task {
 		}
 
 		return `<environment_details>\n${details.trim()}\n</environment_details>`
-	}
-
-	// Add new method to handle phase task completion
-	public async onPhaseTaskComplete(phaseId: string, result: string): Promise<void> {
-		if (!this.phaseTracker) {
-			throw new Error("PhaseTracker not initialized")
-		}
-
-		// Process the phase result
-		const subtaskResults = parseSubtasksFromOutput(result)
-		for (const { id, completed } of subtaskResults) {
-			if (completed) {
-				this.phaseTracker.completeSubtask(this.phaseTracker.currentPhase.index, id)
-			}
-		}
-
-		// Store phase data for potential use in later phases
-		this.sidebarController.setPhaseData(phaseId, {
-			result,
-			completedSubtasks: subtaskResults.filter((s) => s.completed).map((s) => s.id),
-		})
 	}
 }

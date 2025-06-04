@@ -147,7 +147,6 @@ function createPhasesFromMatches(
 }
 
 export function parsePlanFromOutput(raw: string): ParsedPlan {
-	// const planRegex = /^#{1,6}\s*Phase\s*Plan\s*[\r\n]+```[\r\n]?([\s\S]*?)```/im
 	const planRegex = /##\s*Phase\s*Plan\s*[\r\n]+([\s\S]*)$/im
 	const planMatch = planRegex.exec(raw)
 	if (!planMatch) {
@@ -162,17 +161,6 @@ export function parsePlanFromOutput(raw: string): ParsedPlan {
 	}
 
 	return { rawPlan, phases }
-}
-
-export function parseSubtasksFromOutput(msg: string): {
-	id: number
-	completed: boolean
-	note: string
-}[] {
-	// 예시: <subtask id="0" status="done">…</subtask> 같은 태그를 뽑는다거나,
-	// parseAssistantMessageV2(msg) 로 thinking/path 블록을 분류해도 됩니다.
-	// 여기서는 더 구체적인 포맷에 맞춰 구현해주세요.
-	return []
 }
 
 export class PhaseTracker {
@@ -298,7 +286,6 @@ export class PhaseTracker {
 			this.completePhase(current.index)
 		}
 		this.currentPhaseIndex++
-		// PhaseTracker: All phases completed.
 		const next = this.phaseStates[this.currentPhaseIndex]
 		next.status = "in-progress"
 		next.startTime = Date.now()
@@ -314,34 +301,8 @@ export class PhaseTracker {
 			await this.controller.spawnPhaseTask(nextPhasePrompt, next.index)
 		} else {
 			await this.controller.postStateToWebview()
-			await this.controller.postMessageToWebview({ type: "action", action: "focusChatInput"})
+			await this.controller.postMessageToWebview({ type: "action", action: "focusChatInput" })
 		}
-	}
-
-	public onPhaseChange(
-		listener: (phaseId: number, status: PhaseStatus | "in-progress" | "completed" | "skipped") => void,
-	): void {
-		this.phaseChangeListeners.push(listener)
-	}
-
-	public get currentSubtasks(): SubtaskState[] {
-		return this.phaseStates[this.currentPhaseIndex].subtasks
-	}
-
-	public getPhaseById(id: number): Phase {
-		const phase = this.phaseStates.find((p) => p.index === id)
-		if (!phase || !phase.phase) {
-			throw new Error(`Phase with ID ${id} not found or not properly initialized`)
-		}
-		return phase.phase
-	}
-
-	public getPhaseStateById(id: number): PhaseState {
-		const phase = this.phaseStates.find((p) => p.index === id)
-		if (!phase) {
-			throw new Error(`Phase with ID ${id} not found`)
-		}
-		return phase
 	}
 
 	public get currentPhase(): Phase {
@@ -374,26 +335,26 @@ export class PhaseTracker {
 
 	private async saveCheckpoint(): Promise<void> {
 		try {
-			// 1) 저장할 기본 URI 결정
+			// 1) Determine the base URI for saving
 			let baseUri: vscode.Uri
 			const ws = vscode.workspace.workspaceFolders
 			if (ws && ws.length > 0) {
-				// 워크스페이스가 열려 있으면 그 첫 번째 폴더 아래에 .cline 디렉터리 생성
+				// If workspace is open, create .cline directory under the first folder
 				baseUri = vscode.Uri.joinPath(ws[0].uri, ".cline")
 			} else {
-				// 워크스페이스가 없으면 extension의 globalStorageUri 사용
-				// (package.json에서 "globalStorage" 권한이 필요합니다)
+				// If no workspace is available, use the extension's globalStorageUri
+				// ("globalStorage" permission is required in package.json)
 				baseUri = vscode.Uri.joinPath(this.controller.context.globalStorageUri, ".cline")
 			}
 
-			// 2) .cline 폴더가 없으면 만든다
+			// 2) Create the .cline directory if it doesn't exist
 			try {
 				await vscode.workspace.fs.stat(baseUri)
 			} catch {
 				await vscode.workspace.fs.createDirectory(baseUri)
 			}
 
-			// 3) 체크포인트 데이터 구성
+			// 3) Prepare checkpoint data
 			const checkpointData: Record<string, any> = {
 				originalPrompt: this.originalPrompt,
 				rawPlanContent: this.rawPlanContent,
@@ -404,11 +365,9 @@ export class PhaseTracker {
 				phaseExecutionMode: this.phaseExecutionMode, // enum
 				checkpointEnabled: this.checkpointEnabled, // boolean
 				checkpointFrequency: this.checkpointFrequency, // "phase" | "subtask" | "never"
-				// (listeners는 함수이므로 저장 대상에서 제외)
 			}
 			const content = JSON.stringify(checkpointData, null, 2)
 
-			// 4) 원자적 쓰기: .tmp → rename
 			const checkpointUri = vscode.Uri.joinPath(baseUri, "phase-checkpoint.json")
 			const tmpUri = vscode.Uri.joinPath(baseUri, "phase-checkpoint.json.tmp")
 			const encoder = new TextEncoder()
@@ -423,7 +382,7 @@ export class PhaseTracker {
 		outputChannel: vscode.OutputChannel,
 	): Promise<PhaseTracker | undefined> {
 		try {
-			// 1) base 저장소 URI 결정 (workspace 우선, 없으면 globalStorage)
+			// 1) Determine the base URI for storage (prefer workspace, fallback to globalStorage)
 			let baseUri: vscode.Uri
 			const ws = vscode.workspace.workspaceFolders
 			if (ws && ws.length > 0) {
@@ -432,15 +391,15 @@ export class PhaseTracker {
 				baseUri = vscode.Uri.joinPath(controller.context.globalStorageUri, ".cline")
 			}
 
-			// 2) 체크포인트 파일 경로
+			// 2) Checkpoint file path
 			const checkpointUri = vscode.Uri.joinPath(baseUri, "phase-checkpoint.json")
 
-			// 3) 파일 읽기
+			// 3) Read file
 			const data = await vscode.workspace.fs.readFile(checkpointUri)
 			const text = new TextDecoder().decode(data)
 			const checkpoint = JSON.parse(text)
 
-			// 4) PhaseTracker 복원
+			// 4) Restore PhaseTracker
 			const tracker = new PhaseTracker(checkpoint.originalPrompt, controller, outputChannel)
 			tracker.phaseStates = checkpoint.phaseStates
 			tracker.currentPhaseIndex = checkpoint.currentPhaseIndex
@@ -450,7 +409,7 @@ export class PhaseTracker {
 			tracker.phaseExecutionMode = checkpoint.phaseExecutionMode
 			tracker.checkpointEnabled = checkpoint.checkpointEnabled
 			tracker.checkpointFrequency = checkpoint.checkpointFrequency
-			// rawPlanContent 도 저장해 두면—optional
+			// also save rawPlanContent if available - optional
 			if (checkpoint.rawPlanContent) {
 				;(tracker as any).rawPlanContent = checkpoint.rawPlanContent
 			}
