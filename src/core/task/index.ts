@@ -110,8 +110,8 @@ import { isInTestMode } from "../../services/test/TestMode"
 import { processFilesIntoText } from "@integrations/misc/extract-text"
 import { featureFlagsService } from "@services/posthog/feature-flags/FeatureFlagsService"
 import { StreamingJsonReplacer, ChangeLocation } from "@core/assistant-message/diff-json"
-import { PhaseTracker, Phase, Subtask, parsePlanFromOutput, parseSubtasksFromOutput } from "../assistant-message/phase-tracker"
-import { PROMPTS } from "../../api/transform/openai-format"
+import { PhaseTracker, parsePlanFromOutput, parseSubtasksFromOutput } from "../assistant-message/phase-tracker"
+import { PROMPTS, buildPhasePrompt } from "../assistant-message/prompts"
 import { Controller } from "../controller"
 import { parse } from "node:path"
 
@@ -983,7 +983,7 @@ export class Task {
 			const phase = this.phaseTracker.currentPhase
 			phaseAwarePrompt = this.isPhaseRoot
 				? (task ?? "")
-				: this.buildPhasePrompt(phase, this.phaseTracker.totalPhases, this.phaseTracker.getOriginalPrompt())
+				: buildPhasePrompt(phase, this.phaseTracker.totalPhases, this.phaseTracker.getOriginalPrompt())
 		} else {
 			phaseAwarePrompt = task ?? ""
 		}
@@ -1019,12 +1019,12 @@ export class Task {
 		await this.executeCurrentPhase()
 	}
 
-	public async startPhaseOnly(phaseIndex: number, images: Anthropic.ImageBlockParam[] = []): Promise<void> {
+	public async startPhaseOnly(phaseIndex: number, currentPhasePrompt: string): Promise<void> {
 		// 1) 초기화: clearTask() 하지 않고, 기존 PhaseTracker 그대로 재사용
 		this.isPhaseRoot = false
 
 		// 2) runSinglePhase 로 phaseIndex만 실행
-		await this.runSinglePhase(phaseIndex, images)
+		await this.runSinglePhase(phaseIndex, currentPhasePrompt)
 
 		// 3) 실행 결과를 Task UI(채팅/webview)로 보여주기
 		// await this.say(
@@ -1046,7 +1046,7 @@ export class Task {
 
 		await this.say("text", `Here is the proposed plan (Phase Plan):\n\n${rawPlan}`)
 
-		const approved = await this.askForApproval()
+		const approved = await this.askForApproval() // TODO: (sa)
 		if (!approved) {
 			await this.say("text", "Plan execution aborted by user.")
 			return
@@ -1064,22 +1064,19 @@ export class Task {
 		await this.executeCurrentPhase()
 	}
 
-	private async executeCurrentPhase(images: Anthropic.ImageBlockParam[] = []): Promise<void> {
+	private async executeCurrentPhase(): Promise<void> {
 		if (!this.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
 
 		const phase = this.phaseTracker.currentPhase
 		const total = this.phaseTracker.totalPhases
-		const title = phase.title
 		const phaseIndex = this.phaseTracker.currentPhaseIndex
+		const currentPhasePrompt = buildPhasePrompt(phase, total, this.phaseTracker.getOriginalPrompt())
 		if (!this.newPhaseOpened) {
-			await this.sidebarController.spawnPhaseTask(
-				this.buildPhasePrompt(phase, total, this.phaseTracker.getOriginalPrompt()),
-				phaseIndex,
-			)
+			await this.sidebarController.spawnPhaseTask(currentPhasePrompt,phaseIndex)
 		} else {
-			await this.startPhaseOnly(phaseIndex, images)
+			await this.startPhaseOnly(phaseIndex, currentPhasePrompt)
 		}
 
 		// await this.say("text", `✅ Phase ${phaseIndex + 1}/${total} 완료: ${title}`)
@@ -1095,23 +1092,14 @@ export class Task {
 		this.executeCurrentPhase()
 	}
 
-	public async runSinglePhase(phaseIndex: number, images: Anthropic.ImageBlockParam[] = []): Promise<void> {
+	public async runSinglePhase(phaseIndex: number, currentPhasePrompt: string): Promise<void> {
 		// 0) PhaseTracker 준비 확인
 		if (!this.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
 
-		// 1) Phase용 프롬프트 생성
-		const total = this.phaseTracker.totalPhases
-		const original = this.phaseTracker.getOriginalPrompt()
-		const phase = this.phaseTracker.getPhaseById(phaseIndex)
-		const prompt = this.buildPhasePrompt(phase, total, original)
+		const userBlocks: UserContent = [{ type: "text", text: `<task>\n${currentPhasePrompt}\n</task>`}]
 
-		// 2) UserContent 구성 (<task> 태그 + 이미지 블록)
-		const userBlocks: UserContent = [{ type: "text", text: `<task>\n${prompt}\n</task>` }, ...images]
-
-		// 3) LLM 호출: initiateTaskLoop에 captureResponse 모드로 한 번만 실행
-		//    내부에서 tool loop 전부 돌고, 마지막 assistantText를 반환합니다.
 		const phaseFinished = await this.initiateTaskLoop(userBlocks)
 		
 		// 4) subtask별 완료 여부 파싱
@@ -1140,7 +1128,7 @@ export class Task {
 		// this.executeCurrentPhase()
 	}
 
-	private async askForApproval(): Promise<boolean> {
+	private async askForApproval(): Promise<boolean> { // TODO: (sa)
 		const choice = await vscode.window.showInformationMessage(
 			"Do you approve this Phase Plan and want to proceed?",
 			{ modal: true },
@@ -4336,13 +4324,14 @@ export class Task {
 								let completionFiles: string[] | undefined;
 
 								if (this.phaseFinished && !this.phaseTracker?.isAllComplete()) { // TODO: (sa)
+									this.sidebarController.onPhaseCompleted(this, "", /* openNewTask */ true)
+									// const next_prompt = this.phaseTracker?.moveToNextPhase()
+
 									const phase = this.phaseTracker?.currentPhase
 									const total = this.phaseTracker?.totalPhases
-									const next_phase_prompt = phase ? this.buildPhasePrompt(phase, total ?? 1, this.phaseTracker?.getOriginalPrompt() || "") : "";
-									this.sidebarController.onPhaseCompleted(this, next_phase_prompt, /* openNewTask */ true)
-									// const next_prompt = this.phaseTracker?.moveToNextPhase()
-									
-									const { response, text, images, files: newTaskFiles } = await this.ask("new_task", next_phase_prompt, false)
+									const nexPhasePrompt = phase ? buildPhasePrompt(phase, total ?? 1, this.phaseTracker?.getOriginalPrompt() || "") : "";
+									const { response, text, images, files: newTaskFiles } = await this.ask("new_task", nexPhasePrompt, false)
+
 									await this.say("user_feedback", text ?? "", images, completionFiles)
 									await this.saveCheckpoint()
 									if (response === "yesButtonClicked") {
@@ -4655,111 +4644,6 @@ export class Task {
 
 	public getPhaseTracker(): PhaseTracker | undefined {
 		return this.phaseTracker
-	}
-
-	/**
-	 * Build the system / user prompt that will be fed to the LLM for one *execution*
-	 * phase ( i.e. **after** the planning phase has produced the full roadmap ).
-	 *
-	 * @param phase          The Phase record returned by PhaseTracker.currentPhase
-	 * @param total          Total number of phases in the roadmap
-	 * @param originalPrompt The very first user request – shown verbatim for context
-	 */
-	private buildPhasePrompt(phase: Phase, total: number, originalPrompt: string): string {
-		// Helper: pretty-print the path list (can be empty)
-		const pathsSection = phase.paths?.length > 0 ? phase.paths?.join("\n") : "(no specific files yet)"
-
-		// Helper: numbered sub-tasks (guaranteed at least one – but be defensive)
-		const subtasksSection = phase.subtasks.length
-			? phase.subtasks.map((st: Subtask, i: number) => `${i + 1}. ${st.description.trim()}`).join("\n")
-			: "1. (no explicit sub-tasks – use your best judgement)"
-
-		// Final prompt -------------------------------------------------------------
-		return `### Phase ${phase.index} / ${total}  –  ${phase.phase_prompt}
-		You are resuming a multi-phase task.  
-		**Overall user goal** (for reference, do *not* re-plan):
-		────────────────────────────────────────  
-		${originalPrompt.trim()}  
-		────────────────────────────────────────  
-		## Objective of this phase
-		Complete every sub-task listed below **and nothing else**.
-		## Relevant paths / artifacts
-		${pathsSection}
-		## Sub-tasks to carry out in this phase
-		${subtasksSection}
-		---
-		### Tool-use rules for *execution* phases
-		1. **Do not** create new high-level phases or plans.  
-		2. Use the built-in tools (\`<write_to_file>\`, \`<execute_command>\`, …) to accomplish the sub-tasks.  
-		3. After each tool call, wait for the tool result before issuing another call.  
-		4. When **all** listed sub-tasks are finished, wrap up with  
-		\`\`\`
-		<attempt_completion>
-		{concise summary of what was done and where the outputs are}
-		</attempt_completion>
-		\`\`\`  
-		If you realise a prerequisite is missing, briefly explain it inside \`<thinking>\` **before** taking action.  
-		Only proceed when you are confident the current phase can be completed.
-		Begin now.`
-	}
-
-	private async processPhasesSequentially(imageBlocks: Anthropic.ImageBlockParam[] = []): Promise<void> {
-		if (!this.phaseTracker) return
-
-		const total = this.phaseTracker.totalPhases
-		for (let phaseIndex = 1; phaseIndex < total; phaseIndex++) {
-			// Phase 메타 가져오기
-			const phase = this.phaseTracker.getPhaseById(phaseIndex)
-			const title = phase.title // PhaseState 객체 구조에 맞춰
-			const original = this.phaseTracker.getOriginalPrompt()
-
-			// 시작 알림
-			await this.say("text", `🚀 Starting Phase ${phaseIndex}/${total}: ${title}`)
-
-			// 해당 Phase만 실행
-			const resultText = await this.runSinglePhase(phaseIndex, imageBlocks)
-
-			// 완료 알림 (원하는 만큼 결과도 함께)
-			await this.say("text", `✅ Completed Phase ${phaseIndex}/${total}: ${title}\n\n${resultText}`)
-		}
-	}
-
-	private async processPhases(): Promise<boolean> {
-		// If the phase tracker is not initialized, return false
-		if (!this.phaseTracker) {
-			return false
-		}
-
-		while (!this.phaseTracker.isAllComplete()) {
-			const phase = this.phaseTracker.currentPhase
-			const total = this.phaseTracker.totalPhases
-			const original = this.phaseTracker.getOriginalPrompt()
-
-			// 1. Generate prompt for each phase
-			const phasePrompt = this.buildPhasePrompt(phase, total, original)
-
-			let imageBlocks: Anthropic.ImageBlockParam[] = formatResponse.imageBlocks([])
-			const userBlocks: UserContent = [{ type: "text", text: `<task>\n${phasePrompt}\n</task>` }, ...imageBlocks]
-
-			// 2. Execute this Phase (send all subtasks at once and receive results)
-			const assistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
-
-			// 3. Response parsing: Check completion status for each subtask
-			const subtaskResults = parseSubtasksFromOutput(assistantMessage)
-
-			for (const { id, completed } of subtaskResults) {
-				if (completed) {
-					this.phaseTracker.completeSubtask(phase.index, id)
-				}
-			}
-
-			// 4. Check if all phases are completed
-			if (this.phaseTracker.isAllComplete()) {
-				this.sidebarController.onTaskCompleted(this, assistantMessage)
-				// phaseTracker.currentPhase is incremented internally
-			}
-		}
-		return true
 	}
 
 	async recursivelyMakeClineRequests(userContent: UserContent, includeFileDetails: boolean = false): Promise<boolean> {

@@ -1,5 +1,6 @@
 // src/core/assistant-message/phase-tracker.ts
 import { Controller } from "../controller"
+import { buildPhasePrompt } from "./prompts"
 import * as vscode from "vscode"
 
 export type PhaseStatus = "in-complete" | "approved"
@@ -118,6 +119,7 @@ export function parsePhases(rawPlan: string): Phase[] {
 	return []
 }
 
+
 function createPhasesFromMatches(
 	phaseMatches: {
 		index: number
@@ -142,39 +144,6 @@ function createPhasesFromMatches(
 		})),
 		complete: false,
 	}))
-
-	// // Extract tool uses to associate with phases and subtasks
-	// const toolUseRegex = /<(write_to_file|execute_command|attempt_completion)>([\s\S]*?)<\/\1>/g
-	// const toolUses: { type: string; content: string; index: number }[] = []
-	// let match
-
-	// while ((match = toolUseRegex.exec(raw)) !== null) {
-	// 	const toolType = match[1]
-	// 	const content = match[2].trim()
-	// 	// Find which phase this tool use most likely belongs to
-	// 	const phaseIndex = findPhaseForToolUse(match.index, raw, phases)
-	// 	toolUses.push({ type: toolType, content, index: phaseIndex || 0 })
-	// }
-
-	// // Associate tool uses with phases based on position in the text
-	// toolUses.forEach((toolUse) => {
-	// 	if (toolUse.index > 0 && toolUse.index <= phases.length) {
-	// 		const phase = phases[toolUse.index - 1]
-	// 		// Add a subtask for this tool use if not already present
-	// 		const hasMatchingSubtask = phase.subtasks.some(
-	// 			(subtask) => subtask.type === toolUse.type || subtask.description.toLowerCase().includes(toolUse.type),
-	// 		)
-
-	// 		if (!hasMatchingSubtask) {
-	// 			phase.subtasks.push({
-	// 				description: `Perform ${toolUse.type} operation`,
-	// 				type: toolUse.type,
-	// 				completed: false,
-	// 			})
-	// 		}
-	// 	}
-	// })
-
 	return phases
 }
 
@@ -208,7 +177,7 @@ export function parseSubtasksFromOutput(msg: string): {
 }
 
 export class PhaseTracker {
-	private phases: PhaseState[] = []
+	private phaseStates: PhaseState[] = []
 	public currentPhaseIndex = 0
 	private phaseResults: PhaseResult[] = []
 	private executionConfig: any
@@ -228,7 +197,7 @@ export class PhaseTracker {
 		private outputChannel: vscode.OutputChannel,
 	) {
 		// Step 1: Set up the first Phase (Plan) in Plan Mode
-		this.phases.push({
+		this.phaseStates.push({
 			index: 0,
 			origin_prompt: originalPrompt,
 			phase: {
@@ -250,7 +219,7 @@ export class PhaseTracker {
 	// Called after the Plan phase is completed to populate the actual execution Phase list.
 	public addPhasesFromPlan(parsedPhases: Phase[]): void {
 		parsedPhases.forEach((p) => {
-			this.phases.push({
+			this.phaseStates.push({
 				index: p.index,
 				phase: p,
 				subtasks: p.subtasks.map((st, i) => ({
@@ -268,7 +237,7 @@ export class PhaseTracker {
 	}
 
 	public completeSubtask(phaseId: number, subtaskId: number, result?: string): void {
-		const phase = this.phases.find((p) => p.index === phaseId)
+		const phase = this.phaseStates.find((p) => p.index === phaseId)
 		if (!phase) {
 			return
 		}
@@ -288,13 +257,13 @@ export class PhaseTracker {
 		}
 	}
 
-	public markCurrentPhaseComplete(summary: string = "", thinking: string[] = []): void {
-		const id = this.phases[this.currentPhaseIndex].index
-		this.completePhase(id, summary, thinking)
+	public markCurrentPhaseComplete(summary: string = ""): void {
+		const id = this.phaseStates[this.currentPhaseIndex].index
+		this.completePhase(id, summary)
 	}
 
-	private completePhase(phaseId: number, summary: string = "", thinking: string[] = []): void {
-		const phase = this.phases.find((p) => p.index === phaseId)
+	private completePhase(phaseId: number, summary: string = ""): void {
+		const phase = this.phaseStates.find((p) => p.index === phaseId)
 		if (!phase) {
 			return
 		}
@@ -318,84 +287,38 @@ export class PhaseTracker {
 		if (this.checkpointEnabled && this.checkpointFrequency === "phase") {
 			this.saveCheckpoint()
 		}
-		this.outputChannel.appendLine(`Phase ${phaseId} completed.`)
+
 	}
 
 	public hasNextPhase(): boolean {
-		return this.currentPhaseIndex < this.phases.length - 1
+		return this.currentPhaseIndex < this.phaseStates.length - 1
 	}
 
 	public async moveToNextPhase(rawPlan: string, openNewTask: boolean=false): Promise<void> {
-		const current = this.phases[this.currentPhaseIndex]
+		const current = this.phaseStates[this.currentPhaseIndex]
 		if (!current.complete) {
-			this.completePhase(current.index, rawPlan || "", [])
+			this.completePhase(current.index, rawPlan || "")
 		}
 		this.currentPhaseIndex++
-		if (this.currentPhaseIndex >= this.phases.length) {
-			this.outputChannel.appendLine(`PhaseTracker: All phases completed.`)
-		}
-		const next = this.phases[this.currentPhaseIndex]
+		// PhaseTracker: All phases completed.
+		const next = this.phaseStates[this.currentPhaseIndex]
 		next.status = "in-progress"
 		next.startTime = Date.now()
 
 		this.notifyPhaseChange(next.index, "in-progress")
-		this.outputChannel.appendLine(`PhaseTracker: \Starting Phase ${next.index}: "${next.phase?.phase_prompt}"`)
 		await this.controller.clearTask()
 		if (openNewTask) {
-			await this.controller.spawnPhaseTask(rawPlan, next.index)
+			const nextPhase = this.phaseStates[this.currentPhaseIndex].phase
+			let nextPhasePrompt = ""
+			if (nextPhase) {
+				nextPhasePrompt = buildPhasePrompt(nextPhase, this.totalPhases, this.getOriginalPrompt())
+			}
+			await this.controller.spawnPhaseTask(nextPhasePrompt, next.index)
 		} else {
 			await this.controller.postStateToWebview()
-			await this.controller.postMessageToWebview({ type: "action", action: "chatButtonClicked" })
 			await this.controller.postMessageToWebview({ type: "action", action: "focusChatInput", text: rawPlan })
 		}
 	}
-
-	// public async executeAll(): Promise<void> {
-	// 	switch (this.phaseExecutionMode) {
-	// 		case PhaseExecutionMode.Sequential:
-	// 			await this.executeSequentially()
-	// 			break
-	// 		case PhaseExecutionMode.Parallel:
-	// 			await this.executeParallel()
-	// 			break
-	// 		case PhaseExecutionMode.Contional:
-	// 			await this.executeConditionally()
-	// 			break
-	// 	}
-	// }
-
-	// private async executeSequentially(): Promise<void> {
-	// 	while (this.hasNextPhase()) {
-	// 		await this.moveToNextPhase()
-	// 	}
-	// }
-
-	// private async executeParallel(): Promise<void> {
-	// 	const groups: number[][] = []
-	// 	const pending = new Set(this.phases.map((p) => p.index))
-	// 	while (pending.size) {
-	// 		const group: number[] = []
-	// 		for (const id of pending) {
-	// 			const phase = this.phases.find((p) => p.index === id)!
-	// 		}
-	// 		group.forEach((id) => pending.delete(id))
-	// 		await Promise.all(group.map((id) => this.completePhase(id)))
-	// 	}
-	// }
-
-	// private async executeConditionally(): Promise<void> {
-	// 	const { conditions = {}, defaultAction = "execute" } = this.executionConfig
-	// 	for (const phase of this.phases) {
-	// 		const should = conditions[phase.index] ? await conditions[phase.index]() : defaultAction === "execute"
-	// 		if (should) {
-	// 			await this.completePhase(phase.index)
-	// 		} else {
-	// 			phase.status = "skipped"
-	// 			phase.complete = true
-	// 			this.notifyPhaseChange(phase.index, "skipped")
-	// 		}
-	// 	}
-	// }
 
 	public onPhaseChange(
 		listener: (phaseId: number, status: PhaseStatus | "in-progress" | "completed" | "skipped") => void,
@@ -404,11 +327,11 @@ export class PhaseTracker {
 	}
 
 	public get currentSubtasks(): SubtaskState[] {
-		return this.phases[this.currentPhaseIndex].subtasks
+		return this.phaseStates[this.currentPhaseIndex].subtasks
 	}
 
 	public getPhaseById(id: number): Phase {
-		const phase = this.phases.find((p) => p.index === id)
+		const phase = this.phaseStates.find((p) => p.index === id)
 		if (!phase || !phase.phase) {
 			throw new Error(`Phase with ID ${id} not found or not properly initialized`)
 		}
@@ -416,7 +339,7 @@ export class PhaseTracker {
 	}
 
 	public getPhaseStateById(id: number): PhaseState {
-		const phase = this.phases.find((p) => p.index === id)
+		const phase = this.phaseStates.find((p) => p.index === id)
 		if (!phase) {
 			throw new Error(`Phase with ID ${id} not found`)
 		}
@@ -424,7 +347,7 @@ export class PhaseTracker {
 	}
 
 	public get currentPhase(): Phase {
-		const p = this.phases[this.currentPhaseIndex]
+		const p = this.phaseStates[this.currentPhaseIndex]
 		if (!p || !p.phase) {
 			throw new Error(`Phase ${this.currentPhaseIndex} is not properly initialized: missing phase data`)
 		}
@@ -432,11 +355,11 @@ export class PhaseTracker {
 	}
 
 	public get totalPhases(): number {
-		return this.phases.length
+		return this.phaseStates.length
 	}
 
 	public isAllComplete(): boolean {
-		return this.phases.every((p) => p.complete)
+		return this.phaseStates.every((p) => p.complete)
 	}
 
 	private notifyPhaseChange(id: number, status: PhaseStatus | "in-progress" | "completed" | "skipped"): void {
@@ -476,7 +399,7 @@ export class PhaseTracker {
 			const checkpointData: Record<string, any> = {
 				originalPrompt: this.originalPrompt,
 				rawPlanContent: this.rawPlanContent,
-				phases: this.phases, // PhaseState[]
+				phaseStates: this.phaseStates, // PhaseState[]
 				currentPhaseIndex: this.currentPhaseIndex, // number
 				phaseResults: this.phaseResults, // PhaseResult[]
 				executionConfig: this.executionConfig, // any
@@ -494,9 +417,9 @@ export class PhaseTracker {
 			await vscode.workspace.fs.writeFile(tmpUri, encoder.encode(content))
 			await vscode.workspace.fs.rename(tmpUri, checkpointUri, { overwrite: true })
 
-			this.outputChannel.appendLine(`✔️ Phase checkpoint saved at: ${checkpointUri.fsPath}`)
+
 		} catch (error) {
-			this.outputChannel.appendLine(`❌ Error saving phase checkpoint: ${error}`)
+
 		}
 	}
 
@@ -525,7 +448,7 @@ export class PhaseTracker {
 
 			// 4) PhaseTracker 복원
 			const tracker = new PhaseTracker(checkpoint.originalPrompt, controller, outputChannel)
-			tracker.phases = checkpoint.phases
+			tracker.phaseStates = checkpoint.phaseStates
 			tracker.currentPhaseIndex = checkpoint.currentPhaseIndex
 			tracker.rawPlanContent = checkpoint.rawPlanContent
 			tracker.phaseResults = checkpoint.phaseResults
@@ -537,11 +460,10 @@ export class PhaseTracker {
 			if (checkpoint.rawPlanContent) {
 				;(tracker as any).rawPlanContent = checkpoint.rawPlanContent
 			}
-
-			outputChannel.appendLine(`✔️ Restored phase checkpoint from ${checkpointUri.fsPath}`)
+			// Restored phase checkpoint
 			return tracker
 		} catch (err) {
-			outputChannel.appendLine(`⚠️ No phase checkpoint to restore or failed: ${err}`)
+			// No phase checkpoint to restore or failed
 			return undefined
 		}
 	}
