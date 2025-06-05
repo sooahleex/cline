@@ -1,4 +1,5 @@
 import { Anthropic } from "@anthropic-ai/sdk"
+import { PROMPTS } from "../../assistant-message/prompts"
 import OpenAI from "openai"
 
 export function convertToOpenAiMessages(
@@ -171,6 +172,14 @@ export function convertToOpenAiMessages(
 				})
 			}
 		}
+	}
+
+	// Add planning prompt only for the first message
+	if (openAiMessages.length > 0 && openAiMessages[0].role === "user") {
+		openAiMessages.splice(1, 0, {
+			role: "user",
+			content: PROMPTS.PLANNING,
+		})
 	}
 
 	return openAiMessages

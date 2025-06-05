@@ -37,6 +37,7 @@ import { ShowMessageType } from "@/shared/proto/host/window"
 import { AuthState } from "@/shared/proto/index.cline"
 import { getLatestAnnouncementId } from "@/utils/announcements"
 import { getCwd, getDesktopDir } from "@/utils/path"
+import { PhaseTracker } from "../assistant-message/phase-tracker"
 import { PromptRegistry } from "../prompts/system-prompt"
 import {
 	ensureCacheDirectoryExists,
@@ -64,6 +65,7 @@ https://github.com/KumarVariable/vscode-extension-sidebar-html/blob/master/src/c
 export class Controller {
 	task?: Task
 
+	private phaseTracker?: PhaseTracker
 	mcpHub: McpHub
 	accountService: ClineAccountService
 	authService: AuthService
@@ -83,6 +85,9 @@ export class Controller {
 		timestamps: number[]
 		lastSuggestionShown?: number
 	} = { timestamps: [] }
+
+	private phaseTaskCallbacks: Map<number, (result: string) => void> = new Map()
+	private phaseData: Map<string, any> = new Map()
 
 	// Timer for periodic remote config fetching
 	private remoteConfigTimer?: NodeJS.Timeout
@@ -189,6 +194,7 @@ export class Controller {
 
 		await this.clearTask()
 		this.mcpHub.dispose()
+		this.phaseTracker = undefined
 
 		console.error("Controller disposed")
 	}
@@ -242,6 +248,17 @@ export class Controller {
 		this.stateManager.setGlobalState("userInfo", info)
 	}
 
+
+	/**
+	 * spawnNewTask - 현재 진행 중인 Task를 완전히 종료하고,
+	 * 새 task + 새 PhaseTracker를 생성한다.
+	 */
+	public async spawnNewTask(newPrompt?: string, images?: string[], files?: string[], historyItem?: HistoryItem, taskSettings?: Partial<Settings>) {
+		// initTask() already clears any existing task and phase tracker
+		const taskId = await this.initTask(newPrompt, images, files, historyItem, taskSettings)
+		return taskId
+	}
+
 	async initTask(
 		task?: string,
 		images?: string[],
@@ -262,6 +279,30 @@ export class Controller {
 		const defaultTerminalProfile = this.stateManager.getGlobalSettingsKey("defaultTerminalProfile")
 		const isNewUser = this.stateManager.getGlobalStateKey("isNewUser")
 		const taskHistory = this.stateManager.getGlobalStateKey("taskHistory")
+
+		// 1) phaseTracker 가 이미 있으면 재사용, 없으면 생성
+		let newTracker: PhaseTracker
+		if (historyItem) {
+			// 체크포인트에서 복원
+			const trackerFromCheckpoint = await PhaseTracker.fromCheckpoint(this)
+			if (trackerFromCheckpoint) {
+				newTracker = trackerFromCheckpoint
+			} else {
+				// Fallback if checkpoint restoration fails
+				newTracker = new PhaseTracker(task ?? "", this)
+			}
+		} else if (this.phaseTracker) {
+			// 이미 메모리에 있던 tracker 재사용
+			newTracker = this.phaseTracker
+		} else {
+			// 완전 신규
+			newTracker = new PhaseTracker(task ?? "", this)
+		}
+		this.phaseTracker = newTracker
+
+		// 2) isPhaseRoot 은 “진짜 새 작업”일 때만 true
+		//    체크포인트 복원(historyItem)이거나, 기존 tracker 재사용 시에는 false
+		const isPhaseRoot = !historyItem && !this.phaseTracker.rawPlanContent
 
 		const NEW_USER_TASK_COUNT_THRESHOLD = 10
 
@@ -328,6 +369,8 @@ export class Controller {
 			cwd,
 			stateManager: this.stateManager,
 			workspaceManager: this.workspaceManager,
+			phaseTracker: newTracker,
+			isPhaseRoot,
 			task,
 			images,
 			files,
@@ -975,6 +1018,20 @@ export class Controller {
 		}
 		await this.task?.abortTask()
 		this.task = undefined // removes reference to it, so once promises end it will be garbage collected
+
+		try {
+			const workspaceFolder = vscode.workspace.workspaceFolders?.[0]
+			if (workspaceFolder) {
+				const checkpointPath = vscode.Uri.joinPath(workspaceFolder.uri, ".cline", "phase-checkpoints.json")
+				try {
+					await vscode.workspace.fs.delete(checkpointPath, { recursive: false, useTrash: false })
+				} catch {
+					// Ignore errors, such as if file doesn't exist
+				}
+			}
+		} catch (e) {
+			console.error("Error clearing checkpoint file:", e)
+		}
 	}
 
 	// Caching mechanism to keep track of webview messages + API conversation history per provider instance
@@ -1006,4 +1063,39 @@ export class Controller {
 		this.stateManager.setGlobalState("taskHistory", history)
 		return history
 	}
+
+	// secrets
+	public async onPhaseCompleted(task: Task, openNewTask: boolean = false): Promise<void> {
+		const tracker = task.getPhaseTracker?.() || this.phaseTracker
+		if (!tracker) {
+			return
+		}
+
+		if (tracker.hasNextPhase()) {
+			await tracker.moveToNextPhase(openNewTask).catch((err: Error) => console.error(`Error moving to next phase: ${err}`))
+		}
+		if (tracker.isAllComplete()) {
+			await this.onTaskCompleted()
+		}
+	}
+
+	public async onTaskCompleted(): Promise<void> {
+		vscode.window.showInformationMessage("🎉 All phases finished!")
+		// this.say("🎉 All phases finished!")
+		this.phaseTracker = undefined // reset phase tracker
+	}
+
+	public async spawnPhaseTask(phasePrompt: string, phaseId: number): Promise<string> {
+		return new Promise((resolve) => {
+			this.phaseTaskCallbacks.set(phaseId, (result) => {
+				resolve(result)
+			})
+			this.spawnNewTask(phasePrompt)
+		})
+	}
+
+	public setPhaseData(phaseId: string, data: any): void {
+		this.phaseData.set(phaseId, data)
+	}
+	// dev
 }

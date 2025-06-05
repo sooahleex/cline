@@ -86,6 +86,8 @@ import { TerminalHangStage, TerminalUserInterventionAction, telemetryService } f
 import { ShowMessageType } from "@/shared/proto/index.host"
 import { isClineCliInstalled, isCliSubagentContext } from "@/utils/cli-detector"
 import { isInTestMode } from "../../services/test/TestMode"
+import { PhaseTracker, parsePlanFromOutput } from "../assistant-message/phase-tracker"
+import { buildPhasePrompt, PROMPTS } from "../assistant-message/prompts"
 import { ensureLocalClineDirExists } from "../context/instructions/user-instructions/rule-helpers"
 import { refreshWorkflowToggles } from "../context/instructions/user-instructions/workflows"
 import { Controller } from "../controller"
@@ -114,6 +116,8 @@ type TaskParams = {
 	vscodeTerminalExecutionMode: "vscodeTerminal" | "backgroundExec"
 	cwd: string
 	stateManager: StateManager
+	phaseTracker?: PhaseTracker
+	isPhaseRoot: boolean
 	workspaceManager?: WorkspaceRootManager
 	task?: string
 	images?: string[]
@@ -239,6 +243,12 @@ export class Task {
 	// Task Locking (Sqlite)
 	private taskLockAcquired: boolean
 
+	// phase tracking
+	private phaseTracker?: PhaseTracker
+	private isPhaseRoot: boolean = false
+	public newPhaseOpened: boolean = true
+	private phaseFinished: boolean = false
+
 	constructor(params: TaskParams) {
 		const {
 			controller,
@@ -255,6 +265,8 @@ export class Task {
 			vscodeTerminalExecutionMode,
 			cwd,
 			stateManager,
+			phaseTracker,
+			isPhaseRoot,
 			workspaceManager,
 			task,
 			images,
@@ -272,6 +284,8 @@ export class Task {
 		this.postStateToWebview = postStateToWebview
 		this.reinitExistingTaskFromId = reinitExistingTaskFromId
 		this.cancelTask = cancelTask
+		this.phaseTracker = phaseTracker
+		this.isPhaseRoot = isPhaseRoot
 		this.clineIgnoreController = new ClineIgnoreController(cwd)
 		this.taskLockAcquired = taskLockAcquired
 
@@ -870,7 +884,6 @@ export class Task {
 			await this.clineIgnoreController.initialize()
 		} catch (error) {
 			console.error("Failed to initialize ClineIgnoreController:", error)
-			// Optionally, inform the user or handle the error appropriately
 		}
 		// conversationHistory (for API) and clineMessages (for webview) need to be in sync
 		// if the extension process were killed, then on restart the clineMessages might not be empty, so we need to set it to [] when we create a new Cline client (otherwise webview would show stale messages from previous session)
@@ -879,20 +892,26 @@ export class Task {
 
 		await this.postStateToWebview()
 
-		await this.say("text", task, images, files)
+		let phaseAwarePrompt: string
+		if (this.phaseTracker) {
+			const phase = this.phaseTracker.currentPhase
+			phaseAwarePrompt = this.isPhaseRoot
+				? (task ?? "")
+				: buildPhasePrompt(phase, this.phaseTracker.totalPhases, this.phaseTracker.getOriginalPrompt())
+		} else {
+			phaseAwarePrompt = task ?? ""
+		}
 
+		await this.say("text", task, images, files)
 		this.taskState.isInitialized = true
 
 		const imageBlocks: Anthropic.ImageBlockParam[] = formatResponse.imageBlocks(images)
-
-		const userContent: UserContent = [
-			{
-				type: "text",
-				text: `<task>\n${task}\n</task>`,
-			},
-			...imageBlocks,
-		]
-
+		let userContent: UserContent = []
+		if (this.isPhaseRoot) {
+			userContent = [{ type: "text", text: `${PROMPTS.PLANNING}\n\n<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
+		} else {
+			userContent = [{ type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
+		}
 		if (files && files.length > 0) {
 			const fileContentString = await processFilesIntoText(files)
 			if (fileContentString) {
@@ -983,7 +1002,95 @@ export class Task {
 			})
 		}
 
-		await this.initiateTaskLoop(userContent)
+		// Planning Phase
+		if (this.isPhaseRoot) {
+			await this.executePlanningPhase(userContent)
+		}
+
+		// Execution Phase
+		await this.executeCurrentPhase()
+	}
+
+	private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
+		const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
+		if (!this.phaseTracker) {
+			throw new Error("PhaseTracker not initialized")
+		}
+
+		// Add planning phases to the PhaseTracker
+		const { rawPlan, phases: planSteps } = parsePlanFromOutput(firstAssistantMessage)
+		this.phaseTracker!.rawPlanContent = rawPlan
+		this.phaseTracker.addPhasesFromPlan(planSteps)
+
+		await this.say("text", `Here is the proposed plan (Phase Plan):\n\n${rawPlan}`)
+
+		const approved = await this.askUserApproval("ask_question", "Do you approve this Phase Plan and want to proceed?")
+		if (!approved) {
+			await this.say("text", "Plan execution aborted by user.")
+			return
+		}
+
+		// Planning phase is complete, disabling root mode
+		this.isPhaseRoot = false
+
+		// Mark the first phase as complete
+		this.phaseTracker.markCurrentPhaseComplete(undefined)
+		this.controller.onPhaseCompleted(this)
+
+		// Start execution of the first phase
+		this.newPhaseOpened = false
+		await this.executeCurrentPhase()
+	}
+
+	private async executeCurrentPhase(): Promise<void> {
+		if (!this.phaseTracker) {
+			throw new Error("PhaseTracker not initialized")
+		}
+
+		const phase = this.phaseTracker.currentPhase
+		const total = this.phaseTracker.totalPhases
+		const phaseIndex = this.phaseTracker.currentPhaseIndex
+		const currentPhasePrompt = buildPhasePrompt(phase, total, this.phaseTracker.getOriginalPrompt())
+		if (!this.newPhaseOpened) {
+			await this.controller.spawnPhaseTask(currentPhasePrompt, phaseIndex)
+		} else {
+			this.isPhaseRoot = false
+			await this.runSinglePhase(phaseIndex, currentPhasePrompt)
+		}
+		this.newPhaseOpened = false
+		if (this.phaseTracker.isAllComplete()) {
+			await this.say("text", "All phases completed successfully!")
+			this.controller.onTaskCompleted()
+		}
+		this.executeCurrentPhase()
+	}
+
+	public async runSinglePhase(phaseIndex: number, currentPhasePrompt: string): Promise<void> {
+		if (!this.phaseTracker) {
+			throw new Error("PhaseTracker not initialized")
+		}
+
+		const userBlocks: UserContent = [{ type: "text", text: `<task>\n${currentPhasePrompt}\n</task>` }]
+
+		const phaseFinished = await this.initiateTaskLoop(userBlocks)
+		if (phaseFinished) {
+			const id = 0
+			this.phaseTracker.completeSubtask(phaseIndex, id)
+		}
+
+		if (phaseFinished) {
+			this.controller.onPhaseCompleted(this)
+		}
+	}
+
+	async askUserApproval(type: ClineAsk, partialMessage?: string): Promise<boolean> {
+		const { response, text, images, files } = await this.ask(type, partialMessage)
+		if (response !== "yesButtonClicked") {
+			return false
+		} else {
+			await this.checkpointManager?.saveCheckpoint()
+			return true
+		}
 	}
 
 	public async resumeTaskFromHistory() {
@@ -1250,7 +1357,9 @@ export class Task {
 		await this.initiateTaskLoop(newUserContent)
 	}
 
-	private async initiateTaskLoop(userContent: UserContent): Promise<void> {
+	private async initiateTaskLoop(userContent: UserContent): Promise<boolean | void> {
+		await this.messageStateHandler.addToApiConversationHistory({ role: "user", content: userContent })
+
 		let nextUserContent = userContent
 		let includeFileDetails = true
 		while (!this.taskState.abort) {
@@ -1260,6 +1369,9 @@ export class Task {
 			//  The way this agentic loop works is that cline will be given a task that he then calls tools to complete. unless there's an attempt_completion call, we keep responding back to him with his tool's responses until he either attempt_completion or does not use anymore tools. If he does not use anymore tools, we ask him to consider if he's completed the task and then call attempt_completion, otherwise proceed with completing the task.
 
 			//const totalCost = this.calculateApiCost(totalInputTokens, totalOutputTokens)
+			if (this.phaseFinished) {
+				return true
+			}
 			if (didEndLoop) {
 				// For now a task never 'completes'. This will only happen if the user hits max requests and denies resetting the count.
 				//this.say("task_completed", `Task completed. Total API usage cost: ${totalCost}`)
@@ -1330,6 +1442,37 @@ export class Task {
 		// Not at a button-only state - we're in the middle of work or just finished something
 		// Run the hook since cancelling would interrupt actual work
 		return true
+	}
+
+	private async initiateTaskLoopCaptureFirstResponse(userContent: UserContent): Promise<string> {
+		// Push user turn into conversation history
+		await this.messageStateHandler.addToApiConversationHistory({ role: "user", content: userContent })
+
+		try {
+			const markdown = userContent.map(formatContentBlockToMarkdown).join("\n\n")
+			await this.say("api_req_started", JSON.stringify({ request: markdown }))
+		} catch (e) {
+			console.warn("Could not show api_req_started banner:", e)
+		}
+
+		// reuse the existing streaming machinery
+		const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1)
+		let assistantText = ""
+		for await (const chunk of firstStream) {
+			if (chunk.type === "text") {
+				assistantText += chunk.text
+			}
+		}
+
+		// persist to history, so the Controller sees it if needed
+		await this.say("api_req_finished")
+		await this.messageStateHandler.addToApiConversationHistory({
+			role: "assistant",
+			content: [{ type: "text", text: assistantText }],
+		})
+		await this.postStateToWebview()
+
+		return assistantText
 	}
 
 	async abortTask() {
@@ -2331,10 +2474,17 @@ export class Task {
 		}
 	}
 
+	public getPhaseTracker(): PhaseTracker | undefined {
+		return this.phaseTracker
+	}
+
 	async recursivelyMakeClineRequests(userContent: UserContent, includeFileDetails: boolean = false): Promise<boolean> {
 		// Check abort flag at the very start to prevent any execution after cancellation
 		if (this.taskState.abort) {
 			throw new Error("Task instance aborted")
+		}
+		if (this.phaseFinished) {
+			return true
 		}
 
 		// Increment API request counter for focus chain list management
@@ -3013,7 +3163,7 @@ export class Task {
 						type: "text",
 						text: assistantTextOnly,
 						// reasoning_details only exists for cline/openrouter providers
-						// @ts-ignore-next-line
+						// @ts-expect-error-next-line
 						reasoning_details: reasoningDetails.length > 0 ? reasoningDetails : undefined,
 					})
 				}
