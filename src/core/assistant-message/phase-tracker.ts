@@ -5,20 +5,21 @@ import * as vscode from "vscode"
 
 export type PhaseStatus = "in-complete" | "approved"
 
-export enum PhaseExecutionMode {
-	Sequential,
-	Parallel,
-	Contional,
-}
-
 export interface Phase {
-	index: number
-	phase_prompt?: string
+	phaseIdx: number
 	title: string
-	description?: string
-	paths: string[]
-	subtasks: Subtask[]
-	complete: boolean
+	exeOrderIdx: number
+	prerequisites?: string[]
+	relatedRequirements?: string[]
+	requirementCoverage?: string[]
+	coreObjectives?: string[]
+	functionalRequirements?: string[]
+	deliverables?: string[]
+	nonFunctionalRequirements?: string[]
+	completionCriteria?: Subtask[]
+	handoffChecklist?: Subtask[]
+	paths?: string[]
+	subtasks?: Subtask[]
 }
 
 export interface Subtask {
@@ -27,24 +28,24 @@ export interface Subtask {
 	completed: boolean
 }
 
-export interface SubtaskState {
-	index: number
-	subtask: Subtask
-	result?: string
-	startTime?: number
-	endTime?: number
-}
-
 export interface PhaseState {
 	index: number
-	origin_prompt?: string
+	projOverview?: string
+	executionPlan?: string
+	requirements?: RequirementInventory
 	phase?: Phase
-	subtasks: SubtaskState[]
 	complete: boolean
 	status: PhaseStatus | "in-progress" | "completed" | "skipped"
 	startTime?: number
 	endTime?: number
 }
+
+export interface Requirement {
+	id: string
+	description: string
+}
+
+export type RequirementInventory = Record<string, string>
 
 export interface PhaseResult {
 	phaseId: number
@@ -54,200 +55,256 @@ export interface PhaseResult {
 }
 
 export interface ParsedPlan {
-	rawPlan: string
+	projOverview: string
+	executionPlan: string
+	requirements: RequirementInventory
 	phases: Phase[]
 }
 
-export function parsePhases(rawPlan: string): Phase[] {
-	const planContent = rawPlan
-
-	// Slice and push for each Phase header
-	interface PhaseInfo {
-		index: number
-		phase_prompt: string
-		title: string
-		description: string
-		paths: string[]
-		subtasks: string[]
-	}
-
-	const phaseMatches: PhaseInfo[] = []
-	const headerRegex = /^Phase\s*(\d+)\s*[:\-]\s*([^\r\n]+)/gim
-	const matches = Array.from(planContent.matchAll(headerRegex))
-
-	for (let i = 0; i < matches.length; i++) {
-		const h = matches[i]
-		const idx = parseInt(h[1], 10)
-		const title = h[2].trim()
-
-		// The block extends from right after this header until the start of the next header
-		const start = (h.index ?? 0) + h[0].length
-		// peek ahead to find the start index of the next header
-		const end = i + 1 < matches.length ? (matches[i + 1].index ?? planContent.length) : planContent.length
-
-		const block = planContent.slice(start, end).trim()
-		// Parse description / paths / subtasks from the block
-		const description = /-?\s*Description:\s*([^\r\n]+)/i.exec(block)?.[1].trim() || ""
-
-		const pathsMatch = /-?\s*Paths:\s*([\s\S]*?)(?=(?:-?\s*Description:|-?\s*Subtasks:|$))/i.exec(block)
-		const pathsText = pathsMatch ? pathsMatch[1] : ""
-		const paths = pathsText
-			.split(/\r?\n/)
-			.map((l) => l.replace(/^[\s*•\-\s]+/, "").trim())
-			.filter((l) => l.length > 0)
-
-		const subtaskMatch = /-?\s*Subtasks:\s*([\s\S]*)/i.exec(block)
-		const subtaskText = subtaskMatch ? subtaskMatch[1] : ""
-		const subtasks = subtaskText
-			.split(/\r?\n/)
-			.map((l) => l.replace(/^[\s*•\-\s]+/, "").trim())
-			.filter((l) => l.length > 0)
-
-		phaseMatches.push({
-			index: idx,
-			phase_prompt: h[0].trim(),
-			title: title,
-			description: description,
-			paths: paths,
-			subtasks: subtasks,
-		})
-	}
-
-	if (phaseMatches.length > 0) {
-		return createPhasesFromMatches(phaseMatches)
-	}
-	return []
+function extractTag(tag: string, source: string): string {
+	//   <tag>   (including all spaces)   </tag>
+	const re = new RegExp(`<${tag}>\\s*([\\s\\S]*?)\\s*</${tag}>`, "i")
+	const match = source.match(re)
+	return match ? match[1].trim() : ""
 }
 
-function createPhasesFromMatches(
-	phaseMatches: {
-		index: number
-		phase_prompt: string
-		title: string
-		description: string
-		paths: string[]
-		subtasks: string[]
-	}[],
-): Phase[] {
-	// Create phases from the numbered list descriptions
-	const phases: Phase[] = phaseMatches.map((phaseMatch) => ({
-		index: phaseMatch.index,
-		phase_prompt: phaseMatch.phase_prompt,
-		title: phaseMatch.title,
-		description: phaseMatch.description,
-		paths: phaseMatch.paths,
-		subtasks: phaseMatch.subtasks.map((subtask, i) => ({
-			index: i,
-			description: subtask,
-			completed: false,
-		})),
-		complete: false,
-	}))
+export function parseProjectOverview(source: string): string {
+	// Extract only the project_overview block
+	const projViewRe = /<project_overview>([\s\S]*?)<\/project_overview>/i
+	const pvMatch = source.match(projViewRe)
+	if (!pvMatch) {
+		throw new Error("project_overview section not found.")
+	}
+	const projOverview = pvMatch[1].trim()
+	return projOverview
+}
+
+export function parseExecutionPlan(raw: string): string {
+	// Extract the execution plan section from the raw text
+	const planRegex = /<execution_plan>([\s\S]*?)<\/execution_plan>/i
+	const planMatch = raw.match(planRegex)
+	if (!planMatch) {
+		throw new Error("No execution plan section found in the input text")
+	}
+	const executionPlan = planMatch[1].trim()
+	return executionPlan
+}
+
+export function parseRequirement(raw: string): RequirementInventory {
+	// Extract the requirement inventory section from the raw text
+	const invRe = /<requirement_inventory>([\s\S]*?)<\/requirement_inventory>/i
+	const invMatch = raw.match(invRe)
+	if (!invMatch) {
+		throw new Error("No requirement inventory section found in the input text")
+	}
+	const inventoryRaw = invMatch[1].trim()
+
+	const lines = inventoryRaw.split(/\r?\n/)
+	const inventory: RequirementInventory = {}
+
+	for (const rawLine of lines) {
+		const line = rawLine.trim()
+		if (!line) {
+			continue
+		}
+		const reqMatch = line.match(/^-+\s*(REQ-\d{3})\s*:\s*(.+)$/i)
+		if (reqMatch) {
+			const [, id, description] = reqMatch
+			inventory[id] = description.trim()
+		}
+	}
+	return inventory
+}
+
+/** Convert checklist lines to Subtask[] */
+function parseChecklist(tag: string, block: string): Subtask[] {
+	const criteria = extractTag(block, tag)
+	if (!criteria) {
+		// fallback: use Phase title as a single Subtask
+		return [{ index: 1, description: extractTag(block, "title"), completed: false }]
+	}
+
+	const subtasks: Subtask[] = []
+	let subIdx = 1
+	criteria.split(/\r?\n/).forEach((ln) => {
+		// - [ ] content   |   - content   |   1. content
+		const m = ln.match(/^\s*(?:[-*]|\d+\.)\s*(?:\[\s*\]\s*)?(.+)$/)
+		if (m) {
+			subtasks.push({ index: subIdx++, description: m[1].trim(), completed: false })
+		}
+	})
+
+	// If there are no check items, use the Phase title as the default Subtask
+	if (subtasks.length === 0) {
+		subtasks.push({ index: 1, description: extractTag(block, "title"), completed: false })
+	}
+	return subtasks
+}
+
+function extractRequirement(source: string): string[] {
+	const re = new RegExp(`<related_input_requirements>\\s*([\\s\\S]*?)\\s*</related_input_requirements>`, "i")
+	const match = source.match(re)
+	const requirements = match ? match[1].trim() : ""
+
+	const lines = requirements.split(/\r?\n/)
+	const relatedRequirements: string[] = []
+	for (const rawLine of lines) {
+		const line = rawLine.trim()
+		const reqMatch = line.match(/^-+\s*(REQ-\d{3})\s*:\s*(.+)$/i)
+		if (reqMatch) {
+			const [, id] = reqMatch
+			relatedRequirements.push(id)
+		}
+	}
+	return relatedRequirements
+}
+
+export function parsePhase(raw: string): Phase[] {
+	const phaseBlocks = raw.match(/<subtask>([\s\S]*?)<\/subtask>/gi) ?? []
+	const phases: Phase[] = []
+
+	for (const block of phaseBlocks) {
+		const numberStr = extractTag(block, "number")
+		const title = extractTag(block, "title")
+		const exeOrderStr = extractTag(block, "execution_order")
+
+		const prerequisites = extractTag(block, "prequisites")
+			.split(/\s*,\s*/)
+			.filter(Boolean)
+		const relatedRequirements = extractRequirement(block)
+		const requirementCoverage = extractTag(block, "requirement_coverage")
+			.split(/\s*,\s*/)
+			.filter(Boolean)
+		const coreObjectives = extractTag(block, "core_objectives")
+			.split(/\s*,\s*/)
+			.filter(Boolean)
+		const functionalRequirements = extractTag(block, "functional_requirements")
+			.split(/\s*,\s*/)
+			.filter(Boolean)
+		const deliverables = extractTag(block, "deliverables")
+			.split(/\s*,\s*/)
+			.filter(Boolean)
+		const nonFunctionalRequirements = extractTag(block, "non_functional_requirements")
+			.split(/\s*,\s*/)
+			.filter(Boolean)
+		const completionCriteria: Subtask[] = parseChecklist("completion_criteria", block)
+		const handoffChecklist: Subtask[] = parseChecklist("handoff_checklist", block)
+
+		// Determine Phase.index
+		const phaseIdx = numberStr === "FINAL" ? phaseBlocks.length : parseInt(numberStr)
+		const exeOrderIdx = exeOrderStr === "LAST" ? phaseBlocks.length : parseInt(exeOrderStr)
+
+		phases.push({
+			phaseIdx,
+			title,
+			exeOrderIdx,
+			prerequisites,
+			relatedRequirements,
+			requirementCoverage,
+			coreObjectives,
+			functionalRequirements,
+			deliverables,
+			nonFunctionalRequirements,
+			completionCriteria,
+			handoffChecklist,
+		})
+	}
+	phases.sort((a, b) => a.exeOrderIdx - b.exeOrderIdx) // Sort by index
 	return phases
 }
 
 export function parsePlanFromOutput(raw: string): ParsedPlan {
-	console.log("[parsePlanFromOutput] Starting to parse plan content")
-	console.log("[parsePlanFromOutput] Raw content length:", raw.length)
-	console.log("[parsePlanFromOutput] First 200 chars:", raw.substring(0, 200))
+	const projOverview = parseProjectOverview(raw)
+	const executionPlan = parseExecutionPlan(raw)
+	const requirements = parseRequirement(raw)
+	const phases = parsePhase(raw)
 
-	const planRegex = /##\s*Phase\s*Plan\s*[\r\n]+([\s\S]*)$/im
-	const planMatch = planRegex.exec(raw)
-	if (!planMatch) {
-		console.error("[parsePlanFromOutput] No Phase Plan section found")
-		console.log("[parsePlanFromOutput] Raw content for debugging:", raw)
-		throw new Error("No Phase Plan section found in the input text")
-	}
-
-	const rawPlan = planMatch[1].trim()
-	console.log("[parsePlanFromOutput] Extracted plan content length:", rawPlan.length)
-
-	const phases = parsePhases(rawPlan)
 	console.log("[parsePlanFromOutput] Parsed phases count:", phases.length)
 
 	if (phases.length === 0) {
 		console.error("[parsePlanFromOutput] No phases found in the Phase Plan content")
-		console.log("[parsePlanFromOutput] Raw plan for debugging:", rawPlan)
+		console.log("[parsePlanFromOutput] Raw plan for debugging:", raw)
 		throw new Error("No phases found in the Phase Plan content")
 	}
 
 	console.log("[parsePlanFromOutput] Successfully parsed plan with", phases.length, "phases")
-	return { rawPlan, phases }
+	return { projOverview, executionPlan, requirements, phases }
 }
 
 // 새로운 함수: plan.txt 파일의 subtask 구조를 파싱
-export function parsePlanFromSubtaskFormat(raw: string): ParsedPlan {
-	console.log("[parsePlanFromSubtaskFormat] Starting to parse plan content from subtask format")
-	console.log("[parsePlanFromSubtaskFormat] Raw content length:", raw.length)
+// export function parsePlanFromSubtaskFormat(raw: string): ParsedPlan {
+// 	console.log("[parsePlanFromSubtaskFormat] Starting to parse plan content from subtask format")
+// 	console.log("[parsePlanFromSubtaskFormat] Raw content length:", raw.length)
 
-	// subtask 블록들을 찾기
-	const subtaskRegex = /<subtask>([\s\S]*?)<\/subtask>/g
-	const subtaskMatches = []
-	let match
+// 	// subtask 블록들을 찾기
+// 	const subtaskRegex = /<subtask>([\s\S]*?)<\/subtask>/g
+// 	const subtaskMatches = []
+// 	let match
 
-	while ((match = subtaskRegex.exec(raw)) !== null) {
-		subtaskMatches.push(match[1])
-	}
+// 	while ((match = subtaskRegex.exec(raw)) !== null) {
+// 		subtaskMatches.push(match[1])
+// 	}
 
-	console.log("[parsePlanFromSubtaskFormat] Found subtask blocks:", subtaskMatches.length)
+// 	console.log("[parsePlanFromSubtaskFormat] Found subtask blocks:", subtaskMatches.length)
 
-	if (subtaskMatches.length === 0) {
-		console.error("[parsePlanFromSubtaskFormat] No subtask blocks found")
-		console.log("[parsePlanFromSubtaskFormat] Raw content first 1000 chars:", raw.substring(0, 1000))
-		throw new Error("No subtask blocks found in the plan content")
-	}
+// 	if (subtaskMatches.length === 0) {
+// 		console.error("[parsePlanFromSubtaskFormat] No subtask blocks found")
+// 		console.log("[parsePlanFromSubtaskFormat] Raw content first 1000 chars:", raw.substring(0, 1000))
+// 		throw new Error("No subtask blocks found in the plan content")
+// 	}
 
-	// 각 subtask 블록을 Phase로 변환
-	const phases: Phase[] = []
+// 	// 각 subtask 블록을 Phase로 변환
+// 	const phases: Phase[] = []
 
-	subtaskMatches.forEach((subtaskContent, idx) => {
-		console.log(`[parsePlanFromSubtaskFormat] Processing subtask ${idx + 1}:`)
+// 	subtaskMatches.forEach((subtaskContent, idx) => {
+// 		console.log(`[parsePlanFromSubtaskFormat] Processing subtask ${idx + 1}:`)
 
-		// number 추출
-		const numberMatch = subtaskContent.match(/<number>(.*?)<\/number>/)
-		const numberStr = numberMatch ? numberMatch[1].trim() : (idx + 1).toString()
-		console.log(`[parsePlanFromSubtaskFormat] Found number: ${numberStr}`)
+// 		// number 추출
+// 		const numberMatch = subtaskContent.match(/<number>(.*?)<\/number>/)
+// 		const numberStr = numberMatch ? numberMatch[1].trim() : (idx + 1).toString()
+// 		console.log(`[parsePlanFromSubtaskFormat] Found number: ${numberStr}`)
 
-		// FINAL을 숫자로 변환
-		const phaseIndex = numberStr === "FINAL" ? subtaskMatches.length : parseInt(numberStr)
-		console.log(`[parsePlanFromSubtaskFormat] Phase index: ${phaseIndex}`)
+// 		// FINAL을 숫자로 변환
+// 		const phaseIndex = numberStr === "FINAL" ? subtaskMatches.length : parseInt(numberStr)
+// 		console.log(`[parsePlanFromSubtaskFormat] Phase index: ${phaseIndex}`)
 
-		// title 추출
-		const titleMatch = subtaskContent.match(/<title>(.*?)<\/title>/)
-		const title = titleMatch ? titleMatch[1].trim() : `Phase ${phaseIndex}`
-		console.log(`[parsePlanFromSubtaskFormat] Found title: ${title}`)
+// 		// title 추출
+// 		const titleMatch = subtaskContent.match(/<title>(.*?)<\/title>/)
+// 		const title = titleMatch ? titleMatch[1].trim() : `Phase ${phaseIndex}`
+// 		console.log(`[parsePlanFromSubtaskFormat] Found title: ${title}`)
 
-		// description을 전체 내용으로 설정 (나중에 필요시 더 세분화 가능)
-		const description = subtaskContent.trim()
+// 		// description을 전체 내용으로 설정 (나중에 필요시 더 세분화 가능)
+// 		const description = subtaskContent.trim()
 
-		phases.push({
-			index: phaseIndex,
-			phase_prompt: description,
-			title: title,
-			description: description,
-			paths: [], // 빈 배열로 시작
-			subtasks: [], // 빈 배열로 시작 (실행 중에 동적으로 생성)
-			complete: false,
-		})
+// 		phases.push({
+// 			index: phaseIndex,
+// 			phase_prompt: description,
+// 			title: title,
+// 			description: description,
+// 			paths: [], // 빈 배열로 시작
+// 			subtasks: [], // 빈 배열로 시작 (실행 중에 동적으로 생성)
+// 			complete: false,
+// 		})
 
-		console.log(`[parsePlanFromSubtaskFormat] Successfully parsed phase ${phaseIndex}: ${title}`)
-	})
+// 		console.log(`[parsePlanFromSubtaskFormat] Successfully parsed phase ${phaseIndex}: ${title}`)
+// 	})
 
-	// index 기준으로 정렬
-	phases.sort((a, b) => a.index - b.index)
+// 	// index 기준으로 정렬
+// 	phases.sort((a, b) => a.index - b.index)
 
-	console.log("[parsePlanFromSubtaskFormat] Successfully parsed", phases.length, "phases")
-	phases.forEach((phase) => {
-		console.log(`[parsePlanFromSubtaskFormat] Phase ${phase.index}: ${phase.title}`)
-	})
+// 	console.log("[parsePlanFromSubtaskFormat] Successfully parsed", phases.length, "phases")
+// 	phases.forEach((phase) => {
+// 		console.log(`[parsePlanFromSubtaskFormat] Phase ${phase.index}: ${phase.title}`)
+// 	})
 
-	return {
-		rawPlan: raw,
-		phases: phases,
-	}
-}
+// 	return {
+// 		rawPlan: raw,
+// 		phases: phases,
+// 	}
+// }
 
 // 새로운 함수: plan.txt 파일에서 고정된 플랜 로드
+
 export async function parsePlanFromFixedFile(extensionContext: vscode.ExtensionContext): Promise<ParsedPlan> {
 	console.log("[parsePlanFromFixedFile] Starting to load plan.txt file...")
 	console.log("[parsePlanFromFixedFile] Extension URI:", extensionContext.extensionUri.toString())
@@ -264,7 +321,8 @@ export async function parsePlanFromFixedFile(extensionContext: vscode.ExtensionC
 		console.log("[parsePlanFromFixedFile] Content length:", planContent.length)
 
 		// 새로운 subtask 형식으로 파싱
-		return parsePlanFromSubtaskFormat(planContent)
+		// return parsePlanFromSubtaskFormat(planContent)
+		return parsePlanFromOutput(planContent)
 	} catch (devError) {
 		console.warn("[parsePlanFromFixedFile] Dev path failed:", devError)
 
@@ -286,7 +344,8 @@ export async function parsePlanFromFixedFile(extensionContext: vscode.ExtensionC
 			console.log("[parsePlanFromFixedFile] Content length:", planContent.length)
 
 			// 새로운 subtask 형식으로 파싱
-			return parsePlanFromSubtaskFormat(planContent)
+			// return parsePlanFromSubtaskFormat(planContent)
+			return parsePlanFromOutput(planContent)
 		} catch (distError) {
 			console.error("[parsePlanFromFixedFile] Both paths failed")
 			console.error("[parsePlanFromFixedFile] Dev error:", devError)
@@ -294,7 +353,9 @@ export async function parsePlanFromFixedFile(extensionContext: vscode.ExtensionC
 
 			// 두 경로 모두 실패한 경우 기본 플랜 반환
 			return {
-				rawPlan: "고정된 plan.txt 파일을 읽을 수 없습니다. Extension 빌드를 확인해주세요.",
+				projOverview: "고정된 plan.txt 파일을 읽을 수 없습니다. Extension 빌드를 확인해주세요.",
+				executionPlan: "고정된 plan.txt 파일을 읽을 수 없습니다. Extension 빌드를 확인해주세요.",
+				requirements: {},
 				phases: [],
 			}
 		}
@@ -306,7 +367,6 @@ export class PhaseTracker {
 	public currentPhaseIndex = 0
 	private phaseResults: PhaseResult[] = []
 	private executionConfig: any
-	private phaseExecutionMode: PhaseExecutionMode = PhaseExecutionMode.Sequential
 	private checkpointEnabled: boolean = true
 	private checkpointFrequency: "phase" | "subtask" | "never" = "phase"
 	private phaseChangeListeners: ((
@@ -314,27 +374,24 @@ export class PhaseTracker {
 		newStatus: PhaseStatus | "in-progress" | "completed" | "skipped",
 	) => void)[] = []
 
-	public rawPlanContent?: string
-
 	constructor(
-		private originalPrompt: string,
+		public projOverview: string,
+		public executionPlan: string,
+		public requirements: RequirementInventory,
+
 		private controller: Controller,
-		private outputChannel: vscode.OutputChannel,
 	) {
 		// Step 1: Set up the first Phase (Plan) in Plan Mode
 		this.phaseStates.push({
 			index: 0,
-			origin_prompt: originalPrompt,
+			projOverview: projOverview,
+			executionPlan: executionPlan,
+			requirements: requirements,
 			phase: {
-				index: 0,
-				phase_prompt: "Plan Phase",
+				phaseIdx: 0,
 				title: "Plan Phase",
-				description: "",
-				paths: [],
-				subtasks: [],
-				complete: false,
+				exeOrderIdx: 0,
 			},
-			subtasks: [],
 			complete: false,
 			status: "in-complete",
 			startTime: Date.now(),
@@ -345,69 +402,32 @@ export class PhaseTracker {
 	public addPhasesFromPlan(parsedPhases: Phase[]): void {
 		parsedPhases.forEach((p) => {
 			this.phaseStates.push({
-				index: p.index,
+				index: p.phaseIdx,
 				phase: p,
-				subtasks: p.subtasks.map((st, i) => ({
-					index: i,
-					subtask: st,
-				})),
 				complete: false,
 				status: "in-complete",
 				startTime: Date.now(),
 				endTime: undefined,
 			})
 		})
-		this.outputChannel.appendLine(`PhaseTracker: ${parsedPhases.length} phases registered.`)
 		this.saveCheckpoint().catch(() => {})
 	}
 
-	public completeSubtask(phaseId: number, subtaskId: number, result?: string): void {
-		const phase = this.phaseStates.find((p) => p.index === phaseId)
-		if (!phase) {
-			return
-		}
-		const st = phase.subtasks.find((s) => s.index === subtaskId)
-		if (!st) {
-			return
-		}
-		st.subtask.completed = true
-		st.result = result
-		st.endTime = Date.now()
-		this.outputChannel.appendLine(`Subtask ${subtaskId} of Phase ${phaseId} completed.`)
-		if (phase.subtasks.every((s) => s.subtask.completed)) {
-			this.completePhase(phase.index)
-		}
-		if (this.checkpointEnabled && this.checkpointFrequency === "subtask") {
-			this.saveCheckpoint()
-		}
-	}
-
-	public markCurrentPhaseComplete(summary: string = ""): void {
+	public markCurrentPhaseComplete(): void {
 		const id = this.phaseStates[this.currentPhaseIndex].index
-		this.completePhase(id, summary)
+		this.completePhase(id)
 	}
 
-	private completePhase(phaseId: number, summary: string = ""): void {
+	private completePhase(phaseId: number): void {
 		const phase = this.phaseStates.find((p) => p.index === phaseId)
 		if (!phase) {
 			return
 		}
-		phase.subtasks.forEach((st) => {
-			if (!st.subtask.completed) {
-				st.subtask.completed = true
-			}
-			st.endTime = st.endTime || Date.now()
-		})
+
 		phase.complete = true
 		phase.status = "completed"
 		phase.endTime = Date.now()
-		const result: PhaseResult = {
-			phaseId,
-			summary,
-			subtaskResults: phase.subtasks.reduce((acc, st) => ({ ...acc, [st.index]: st.result || "" }), {}),
-			executionTime: (phase.endTime || Date.now()) - (phase.startTime || 0),
-		}
-		this.phaseResults.push(result)
+
 		this.notifyPhaseChange(phaseId, "completed")
 		if (this.checkpointEnabled && this.checkpointFrequency === "phase") {
 			this.saveCheckpoint()
@@ -434,7 +454,7 @@ export class PhaseTracker {
 			const nextPhase = this.phaseStates[this.currentPhaseIndex].phase
 			let nextPhasePrompt = ""
 			if (nextPhase) {
-				nextPhasePrompt = buildPhasePrompt(nextPhase, this.totalPhases, this.getOriginalPrompt())
+				nextPhasePrompt = buildPhasePrompt(nextPhase, this.totalPhases, this.getProjectOverview())
 			}
 			await this.controller.spawnPhaseTask(nextPhasePrompt, next.index)
 		}
@@ -464,8 +484,8 @@ export class PhaseTracker {
 		})
 	}
 
-	public getOriginalPrompt(): string {
-		return this.originalPrompt
+	public getProjectOverview(): string {
+		return this.projOverview
 	}
 
 	private async saveCheckpoint(): Promise<void> {
@@ -491,13 +511,12 @@ export class PhaseTracker {
 
 			// 3) Prepare checkpoint data
 			const checkpointData: Record<string, any> = {
-				originalPrompt: this.originalPrompt,
-				rawPlanContent: this.rawPlanContent,
+				projOverview: this.projOverview, // string
+				executionPlan: this.executionPlan, // string
+				requirements: this.requirements, // RequirementInventory
 				phaseStates: this.phaseStates, // PhaseState[]
 				currentPhaseIndex: this.currentPhaseIndex, // number
-				phaseResults: this.phaseResults, // PhaseResult[]
 				executionConfig: this.executionConfig, // any
-				phaseExecutionMode: this.phaseExecutionMode, // enum
 				checkpointEnabled: this.checkpointEnabled, // boolean
 				checkpointFrequency: this.checkpointFrequency, // "phase" | "subtask" | "never"
 			}
@@ -512,10 +531,7 @@ export class PhaseTracker {
 	}
 
 	/** Restore tracker progress from .cline/phase-checkpoint.json if present */
-	public static async fromCheckpoint(
-		controller: Controller,
-		outputChannel: vscode.OutputChannel,
-	): Promise<PhaseTracker | undefined> {
+	public static async fromCheckpoint(controller: Controller): Promise<PhaseTracker | undefined> {
 		try {
 			// 1) Determine the base URI for storage (prefer workspace, fallback to globalStorage)
 			let baseUri: vscode.Uri
@@ -535,19 +551,18 @@ export class PhaseTracker {
 			const checkpoint = JSON.parse(text)
 
 			// 4) Restore PhaseTracker
-			const tracker = new PhaseTracker(checkpoint.originalPrompt, controller, outputChannel)
+			const tracker = new PhaseTracker(
+				checkpoint.projOverview,
+				checkpoint.executionPlan,
+				checkpoint.requirement,
+				controller,
+			)
 			tracker.phaseStates = checkpoint.phaseStates
 			tracker.currentPhaseIndex = checkpoint.currentPhaseIndex
-			tracker.rawPlanContent = checkpoint.rawPlanContent
-			tracker.phaseResults = checkpoint.phaseResults
 			tracker.executionConfig = checkpoint.executionConfig
-			tracker.phaseExecutionMode = checkpoint.phaseExecutionMode
 			tracker.checkpointEnabled = checkpoint.checkpointEnabled
 			tracker.checkpointFrequency = checkpoint.checkpointFrequency
-			// also save rawPlanContent if available - optional
-			if (checkpoint.rawPlanContent) {
-				;(tracker as any).rawPlanContent = checkpoint.rawPlanContent
-			}
+
 			// Restored phase checkpoint
 			return tracker
 		} catch (err) {

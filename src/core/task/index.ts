@@ -1024,7 +1024,7 @@ export class Task {
 			const phase = this.phaseTracker.currentPhase
 			phaseAwarePrompt = this.isPhaseRoot
 				? (task ?? "")
-				: buildPhasePrompt(phase, this.phaseTracker.totalPhases, this.phaseTracker.getOriginalPrompt())
+				: buildPhasePrompt(phase, this.phaseTracker.totalPhases, this.phaseTracker.getProjectOverview())
 		} else {
 			phaseAwarePrompt = task ?? ""
 		}
@@ -1066,11 +1066,13 @@ export class Task {
 		}
 
 		// 고정된 plan.txt 파일에서 플랜 로드 (extension context 전달)
-		const { rawPlan, phases: planSteps } = await parsePlanFromFixedFile(this.context)
-		this.phaseTracker!.rawPlanContent = rawPlan
+		const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context)
+		this.phaseTracker!.projOverview = projOverview
+		this.phaseTracker!.executionPlan = executionPlan
+		this.phaseTracker!.requirements = requirements
 		this.phaseTracker.addPhasesFromPlan(planSteps)
 
-		await this.say("text", `Here is the proposed plan (Phase Plan):\n\n${rawPlan}`)
+		await this.say("text", `Here is the proposed plan (Phase Plan):\n\n${executionPlan}`)
 
 		const approved = await this.askUserApproval("ask_question", "Do you approve this Phase Plan and want to proceed?")
 		if (!approved) {
@@ -1082,7 +1084,7 @@ export class Task {
 		this.isPhaseRoot = false
 
 		// Mark the first phase as complete
-		this.phaseTracker.markCurrentPhaseComplete(undefined)
+		this.phaseTracker.markCurrentPhaseComplete()
 		this.sidebarController.onPhaseCompleted(this)
 
 		// Start execution of the first phase
@@ -1098,12 +1100,12 @@ export class Task {
 		const phase = this.phaseTracker.currentPhase
 		const total = this.phaseTracker.totalPhases
 		const phaseIndex = this.phaseTracker.currentPhaseIndex
-		const currentPhasePrompt = buildPhasePrompt(phase, total, this.phaseTracker.getOriginalPrompt())
+		const currentPhasePrompt = buildPhasePrompt(phase, total, this.phaseTracker.getProjectOverview())
 		if (!this.newPhaseOpened) {
 			await this.sidebarController.spawnPhaseTask(currentPhasePrompt, phaseIndex)
 		} else {
 			this.isPhaseRoot = false
-			await this.runSinglePhase(phaseIndex, currentPhasePrompt)
+			await this.runSinglePhase(currentPhasePrompt)
 		}
 		this.newPhaseOpened = false
 		if (this.phaseTracker.isAllComplete()) {
@@ -1113,7 +1115,7 @@ export class Task {
 		this.executeCurrentPhase()
 	}
 
-	public async runSinglePhase(phaseIndex: number, currentPhasePrompt: string): Promise<void> {
+	public async runSinglePhase(currentPhasePrompt: string): Promise<void> {
 		if (!this.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
@@ -1121,11 +1123,6 @@ export class Task {
 		const userBlocks: UserContent = [{ type: "text", text: `<task>\n${currentPhasePrompt}\n</task>` }]
 
 		const phaseFinished = await this.initiateTaskLoop(userBlocks)
-		if (phaseFinished) {
-			const id = 0
-			this.phaseTracker.completeSubtask(phaseIndex, id)
-		}
-
 		if (phaseFinished) {
 			this.sidebarController.onPhaseCompleted(this)
 		}
@@ -4439,7 +4436,7 @@ export class Task {
 									const phase = this.phaseTracker?.currentPhase
 									const total = this.phaseTracker?.totalPhases
 									const nexPhasePrompt = phase
-										? buildPhasePrompt(phase, total ?? 1, this.phaseTracker?.getOriginalPrompt() || "")
+										? buildPhasePrompt(phase, total ?? 1, this.phaseTracker?.getProjectOverview() || "")
 										: ""
 									const {
 										response,

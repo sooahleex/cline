@@ -147,18 +147,18 @@ function parseSubtaskContent(phaseDescription: string): ParsedSubtaskInfo {
  */
 export function buildPhasePrompt(phase: Phase, total: number, originalPrompt: string): string {
 	// Parse detailed information from the phase description
-	const parsedInfo = parseSubtaskContent(phase.description || "")
+	// const parsedInfo = parseSubtaskContent(phase.description || "")
 
 	// Helper: pretty-print the path list (can be empty)
 	const pathsSection =
-		phase.paths?.length > 0
+		phase.paths && phase.paths?.length > 0
 			? phase.paths.map((path) => `<path>${path}</path>`).join("\n")
 			: "<path>no specific files identified yet</path>"
 
 	// Build requirements section
 	let requirementsSection = ""
-	if (parsedInfo.relatedRequirements.length > 0) {
-		const requirements = parsedInfo.relatedRequirements.map((req) => `<requirement>${req}</requirement>`).join("\n")
+	if (phase.relatedRequirements && phase.relatedRequirements.length > 0) {
+		const requirements = phase.relatedRequirements.map((req) => `<requirement>${req}</requirement>`).join("\n")
 		requirementsSection = `<key_requirements>
 ${requirements}
 </key_requirements>
@@ -168,9 +168,10 @@ ${requirements}
 
 	// Build core objective section
 	let objectiveSection = ""
-	if (parsedInfo.coreObjective) {
+	if (phase.coreObjectives && phase.coreObjectives.length > 0) {
+		const coreObjectives = phase.coreObjectives.map((obj) => `<core_objective>${obj}</core_objective>`).join("\n")
 		objectiveSection = `<core_objective>
-${parsedInfo.coreObjective}
+${coreObjectives}
 </core_objective>
 
 `
@@ -178,9 +179,12 @@ ${parsedInfo.coreObjective}
 
 	// Build functional requirements section
 	let functionalSection = ""
-	if (parsedInfo.functionalRequirements) {
+	if (phase.functionalRequirements && phase.functionalRequirements.length > 0) {
+		const functionalRequirements = phase.functionalRequirements
+			.map((req) => `<functional_requirement>${req}</functional_requirement>`)
+			.join("\n")
 		functionalSection = `<functional_requirements>
-${parsedInfo.functionalRequirements}
+${functionalRequirements}
 </functional_requirements>
 
 `
@@ -188,8 +192,8 @@ ${parsedInfo.functionalRequirements}
 
 	// Build deliverables section
 	let deliverablesSection = ""
-	if (parsedInfo.deliverables.length > 0) {
-		const deliverables = parsedInfo.deliverables.map((item) => `<deliverable>${item}</deliverable>`).join("\n")
+	if (phase.deliverables && phase.deliverables.length > 0) {
+		const deliverables = phase.deliverables.map((item) => `<deliverable>${item}</deliverable>`).join("\n")
 		deliverablesSection = `<expected_deliverables>
 ${deliverables}
 </expected_deliverables>
@@ -199,8 +203,8 @@ ${deliverables}
 
 	// Build completion criteria section
 	let completionSection = ""
-	if (parsedInfo.completionCriteria.length > 0) {
-		const criteria = parsedInfo.completionCriteria.map((criteria) => `<criterion>${criteria}</criterion>`).join("\n")
+	if (phase.completionCriteria && phase.completionCriteria.length > 0) {
+		const criteria = phase.completionCriteria.map((criteria) => `<criterion>${criteria}</criterion>`).join("\n")
 		completionSection = `<completion_criteria>
 ${criteria}
 </completion_criteria>
@@ -210,9 +214,12 @@ ${criteria}
 
 	// Build quality requirements section
 	let qualitySection = ""
-	if (parsedInfo.nonFunctionalRequirements) {
+	if (phase.nonFunctionalRequirements && phase.nonFunctionalRequirements.length > 0) {
+		const nonFunctionalRequirements = phase.nonFunctionalRequirements
+			.map((req) => `<non_functional_requirement>${req}</non_functional_requirement>`)
+			.join("\n")
 		qualitySection = `<quality_requirements>
-${parsedInfo.nonFunctionalRequirements}
+${nonFunctionalRequirements}
 </quality_requirements>
 
 `
@@ -220,8 +227,8 @@ ${parsedInfo.nonFunctionalRequirements}
 
 	// Build handoff checklist section
 	let handoffSection = ""
-	if (parsedInfo.handoffChecklist.length > 0) {
-		const checklist = parsedInfo.handoffChecklist.map((item) => `<checklist_item>${item}</checklist_item>`).join("\n")
+	if (phase.handoffChecklist && phase.handoffChecklist.length > 0) {
+		const checklist = phase.handoffChecklist.map((item) => `<checklist_item>${item}</checklist_item>`).join("\n")
 		handoffSection = `<handoff_checklist>
 ${checklist}
 </handoff_checklist>
@@ -230,14 +237,15 @@ ${checklist}
 	}
 
 	// Helper: numbered sub-tasks (guaranteed at least one – but be defensive)
-	const subtasksSection = phase.subtasks.length
-		? phase.subtasks.map((st: Subtask, i: number) => `<task>${i + 1}. ${st.description.trim()}</task>`).join("\n")
-		: "<task>1. Follow the core objective and completion criteria outlined above</task>"
+	const subtasksSection =
+		phase.subtasks && phase.subtasks.length
+			? phase.subtasks.map((st: Subtask, i: number) => `<task>${i + 1}. ${st.description.trim()}</task>`).join("\n")
+			: "<task>1. Follow the core objective and completion criteria outlined above</task>"
 
 	// Final prompt -------------------------------------------------------------
 	return `<phase_execution>
 <phase_info>
-<phase_number>${phase.index}</phase_number>
+<phase_number>${phase.phaseIdx}</phase_number>
 <total_phases>${total - 1}</total_phases>
 <phase_title>${phase.title}</phase_title>
 </phase_info>
@@ -278,6 +286,6 @@ ${deliverablesSection}${completionSection}${qualitySection}${handoffSection}<exe
 </success_criteria>
 </execution_guidelines>
 
-<instruction>Begin Phase ${phase.index} execution now.</instruction>
+<instruction>Begin Phase ${phase.phaseIdx} execution now.</instruction>
 </phase_execution>`
 }
