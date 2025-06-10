@@ -175,7 +175,7 @@ export function parsePhase(raw: string): Phase[] {
 		const title = extractTag("title", block)
 		const exeOrderStr = extractTag("execution_order", block)
 		const prerequisites = extractTagAsLines("prerequisites", block)
-		
+
 		// 공통 필드 초기화
 		const phaseData: Partial<Phase> = {
 			title,
@@ -194,7 +194,7 @@ export function parsePhase(raw: string): Phase[] {
 			systemWideTesting: [],
 			finalDeliverables: [],
 		}
-		
+
 		// FINAL 단계와 일반 단계에 따라 데이터 추출
 		if (numberStr === "FINAL") {
 			phaseData.integrationObjectives = extractTagAsLines("integration_objectives", block, true)
@@ -214,13 +214,13 @@ export function parsePhase(raw: string): Phase[] {
 		}
 
 		// Index calculation - simplify ternary operators
-		const phaseIdx = numberStr 
-			? (numberStr.toUpperCase() === 'FINAL' ? phaseBlocks.length : parseInt(numberStr, 10))
-			: phases.length + 1; // If numberStr doesn't exist, use the next index
-		
-		const exeOrderIdx = exeOrderStr 
-			? (exeOrderStr === "LAST" ? phaseBlocks.length : parseInt(exeOrderStr))
-			: phaseIdx; // If exeOrderStr doesn't exist, set it to the same value as phaseIdx
+		const phaseIdx = numberStr
+			? numberStr.toUpperCase() === "FINAL"
+				? phaseBlocks.length
+				: parseInt(numberStr, 10)
+			: phases.length + 1 // If numberStr doesn't exist, use the next index
+
+		const exeOrderIdx = exeOrderStr ? (exeOrderStr === "LAST" ? phaseBlocks.length : parseInt(exeOrderStr)) : phaseIdx // If exeOrderStr doesn't exist, set it to the same value as phaseIdx
 
 		// Create and add completed Phase object
 		phases.push({
@@ -229,7 +229,7 @@ export function parsePhase(raw: string): Phase[] {
 			exeOrderIdx,
 		} as Phase)
 	}
-	
+
 	// Sort by execution order
 	return phases.sort((a, b) => a.exeOrderIdx - b.exeOrderIdx)
 }
@@ -589,38 +589,38 @@ export class PhaseTracker {
  */
 function splitAndCleanLines(text: string, removeListMarkers: boolean = false): string[] {
 	if (!text) {
-		return [];
+		return []
 	}
-	
+
 	// Split into lines
-	const lines = text.split(/\r?\n/);
-	const result: string[] = [];
-	
+	const lines = text.split(/\r?\n/)
+	const result: string[] = []
+
 	for (let line of lines) {
-		line = line.trim();
-		
+		line = line.trim()
+
 		if (!line) {
-			continue;
+			continue
 		}
-		
+
 		// Remove list markers (optional)
 		if (removeListMarkers) {
 			// Numbered list (1., 2., etc.)
-			line = line.replace(/^\d+\.\s*/, '');
+			line = line.replace(/^\d+\.\s*/, "")
 			// Bullet list (-, *, • etc.)
-			line = line.replace(/^[-*•]\s*/, '');
+			line = line.replace(/^[-*•]\s*/, "")
 		}
-		
-		result.push(line);
+
+		result.push(line)
 	}
-	
-	return result;
+
+	return result
 }
 
 /**
  * Extracts the content of a specific tag and returns it as an array of lines.
  */
 function extractTagAsLines(tag: string, source: string, removeListMarkers: boolean = false): string[] {
-	const content = extractTag(tag, source);
-	return splitAndCleanLines(content, removeListMarkers);
+	const content = extractTag(tag, source)
+	return splitAndCleanLines(content, removeListMarkers)
 }
