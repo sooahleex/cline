@@ -164,11 +164,11 @@ export class Controller {
 			taskHistory,
 		} = await getAllExtensionState(this.context)
 
-		// 1) phaseTracker 가 이미 있으면 재사용, 없으면 생성
+		// If phaseTracker already exists, reuse it, otherwise create a new one
 		let newTracker: PhaseTracker
 		if (historyItem) {
-			// 체크포인트에서 복원
-			const trackerFromCheckpoint = await PhaseTracker.fromCheckpoint(this, this.outputChannel)
+			// Restore from checkpoint
+			const trackerFromCheckpoint = await PhaseTracker.fromCheckpoint(this)
 			if (trackerFromCheckpoint) {
 				newTracker = trackerFromCheckpoint
 			} else {
@@ -179,17 +179,18 @@ export class Controller {
 				throw new Error(errorMsg)
 			}
 		} else if (this.phaseTracker) {
-			// 이미 메모리에 있던 tracker 재사용
+			// Reuse the tracker already existing in memory
 			newTracker = this.phaseTracker
 		} else {
-			// 완전 신규
-			newTracker = new PhaseTracker(task ?? "", this, this.outputChannel)
+			// Completely new
+			// const { projOverview, executionPlan, requirements } = await parsePlanFromOutput(task ?? "")
+			newTracker = new PhaseTracker("", "", {}, this)
 		}
 		this.phaseTracker = newTracker
 
-		// 2) isPhaseRoot 은 “진짜 새 작업”일 때만 true
-		//    체크포인트 복원(historyItem)이거나, 기존 tracker 재사용 시에는 false
-		const isPhaseRoot = !historyItem && !this.phaseTracker.rawPlanContent
+		// isPhaseRoot is only true when it's a "truly new task"
+		// It's false when restoring from checkpoint (historyItem) or reusing an existing tracker
+		const isPhaseRoot = !historyItem && !this.phaseTracker.projOverview
 
 		const NEW_USER_TASK_COUNT_THRESHOLD = 10
 
@@ -220,7 +221,6 @@ export class Controller {
 			browserSettings,
 			chatSettings,
 			this,
-			this.outputChannel,
 			newTracker,
 			isPhaseRoot,
 			shellIntegrationTimeout,

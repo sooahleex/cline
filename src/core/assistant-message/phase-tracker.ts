@@ -18,6 +18,11 @@ export interface Phase {
 	nonFunctionalRequirements?: string[]
 	completionCriteria?: Subtask[]
 	handoffChecklist?: Subtask[]
+	integrationObjectives?: string[]
+	integrationSteps?: string[]
+	originalRequirementsValidations?: Subtask[]
+	systemWideTesting?: string[]
+	finalDeliverables?: Subtask[]
 	paths?: string[]
 	subtasks?: Subtask[]
 }
@@ -118,7 +123,7 @@ export function parseRequirement(raw: string): RequirementInventory {
 
 /** Convert checklist lines to Subtask[] */
 function parseChecklist(tag: string, block: string): Subtask[] {
-	const criteria = extractTag(block, tag)
+	const criteria = extractTag(tag, block)
 	if (!criteria) {
 		// fallback: use Phase title as a single Subtask
 		return [{ index: 1, description: extractTag(block, "title"), completed: false }]
@@ -163,54 +168,70 @@ export function parsePhase(raw: string): Phase[] {
 	const phaseBlocks = raw.match(/<subtask>([\s\S]*?)<\/subtask>/gi) ?? []
 	const phases: Phase[] = []
 
+	console.log("[parsePhase] Found phaseBlocks:", phaseBlocks.length)
+
 	for (const block of phaseBlocks) {
-		const numberStr = extractTag(block, "number")
-		const title = extractTag(block, "title")
-		const exeOrderStr = extractTag(block, "execution_order")
-
-		const prerequisites = extractTag(block, "prequisites")
-			.split(/\s*,\s*/)
-			.filter(Boolean)
-		const relatedRequirements = extractRequirement(block)
-		const requirementCoverage = extractTag(block, "requirement_coverage")
-			.split(/\s*,\s*/)
-			.filter(Boolean)
-		const coreObjectives = extractTag(block, "core_objectives")
-			.split(/\s*,\s*/)
-			.filter(Boolean)
-		const functionalRequirements = extractTag(block, "functional_requirements")
-			.split(/\s*,\s*/)
-			.filter(Boolean)
-		const deliverables = extractTag(block, "deliverables")
-			.split(/\s*,\s*/)
-			.filter(Boolean)
-		const nonFunctionalRequirements = extractTag(block, "non_functional_requirements")
-			.split(/\s*,\s*/)
-			.filter(Boolean)
-		const completionCriteria: Subtask[] = parseChecklist("completion_criteria", block)
-		const handoffChecklist: Subtask[] = parseChecklist("handoff_checklist", block)
-
-		// Determine Phase.index
-		const phaseIdx = numberStr === "FINAL" ? phaseBlocks.length : parseInt(numberStr)
-		const exeOrderIdx = exeOrderStr === "LAST" ? phaseBlocks.length : parseInt(exeOrderStr)
-
-		phases.push({
-			phaseIdx,
+		const numberStr = extractTag("number", block)
+		const title = extractTag("title", block)
+		const exeOrderStr = extractTag("execution_order", block)
+		const prerequisites = extractTagAsLines("prerequisites", block)
+		
+		// 공통 필드 초기화
+		const phaseData: Partial<Phase> = {
 			title,
-			exeOrderIdx,
 			prerequisites,
-			relatedRequirements,
-			requirementCoverage,
-			coreObjectives,
-			functionalRequirements,
-			deliverables,
-			nonFunctionalRequirements,
-			completionCriteria,
-			handoffChecklist,
-		})
+			relatedRequirements: [],
+			requirementCoverage: [],
+			coreObjectives: [],
+			functionalRequirements: [],
+			deliverables: [],
+			nonFunctionalRequirements: [],
+			completionCriteria: [],
+			handoffChecklist: [],
+			integrationObjectives: [],
+			integrationSteps: [],
+			originalRequirementsValidations: [],
+			systemWideTesting: [],
+			finalDeliverables: [],
+		}
+		
+		// FINAL 단계와 일반 단계에 따라 데이터 추출
+		if (numberStr === "FINAL") {
+			phaseData.integrationObjectives = extractTagAsLines("integration_objectives", block, true)
+			phaseData.integrationSteps = extractTagAsLines("integration_steps", block, true)
+			phaseData.originalRequirementsValidations = parseChecklist("original_requirements_validation", block)
+			phaseData.systemWideTesting = extractTagAsLines("system_wide_testing", block, true)
+			phaseData.finalDeliverables = parseChecklist("final_deliverables", block)
+		} else {
+			phaseData.relatedRequirements = extractRequirement(block)
+			phaseData.requirementCoverage = extractTagAsLines("requirement_coverage", block)
+			phaseData.coreObjectives = extractTagAsLines("core_objective", block)
+			phaseData.functionalRequirements = extractTagAsLines("functional_requirements", block)
+			phaseData.deliverables = extractTagAsLines("deliverables_for_next_phase", block)
+			phaseData.nonFunctionalRequirements = extractTagAsLines("non_functional_requirements", block)
+			phaseData.completionCriteria = parseChecklist("completion_criteria", block)
+			phaseData.handoffChecklist = parseChecklist("handoff_checklist", block)
+		}
+
+		// Index calculation - simplify ternary operators
+		const phaseIdx = numberStr 
+			? (numberStr.toUpperCase() === 'FINAL' ? phaseBlocks.length : parseInt(numberStr, 10))
+			: phases.length + 1; // If numberStr doesn't exist, use the next index
+		
+		const exeOrderIdx = exeOrderStr 
+			? (exeOrderStr === "LAST" ? phaseBlocks.length : parseInt(exeOrderStr))
+			: phaseIdx; // If exeOrderStr doesn't exist, set it to the same value as phaseIdx
+
+		// Create and add completed Phase object
+		phases.push({
+			...phaseData,
+			phaseIdx,
+			exeOrderIdx,
+		} as Phase)
 	}
-	phases.sort((a, b) => a.exeOrderIdx - b.exeOrderIdx) // Sort by index
-	return phases
+	
+	// Sort by execution order
+	return phases.sort((a, b) => a.exeOrderIdx - b.exeOrderIdx)
 }
 
 export function parsePlanFromOutput(raw: string): ParsedPlan {
@@ -365,10 +386,6 @@ export async function parsePlanFromFixedFile(extensionContext: vscode.ExtensionC
 export class PhaseTracker {
 	private phaseStates: PhaseState[] = []
 	public currentPhaseIndex = 0
-	private phaseResults: PhaseResult[] = []
-	private executionConfig: any
-	private checkpointEnabled: boolean = true
-	private checkpointFrequency: "phase" | "subtask" | "never" = "phase"
 	private phaseChangeListeners: ((
 		phaseId: number,
 		newStatus: PhaseStatus | "in-progress" | "completed" | "skipped",
@@ -429,9 +446,7 @@ export class PhaseTracker {
 		phase.endTime = Date.now()
 
 		this.notifyPhaseChange(phaseId, "completed")
-		if (this.checkpointEnabled && this.checkpointFrequency === "phase") {
-			this.saveCheckpoint()
-		}
+		this.saveCheckpoint()
 	}
 
 	public hasNextPhase(): boolean {
@@ -516,9 +531,6 @@ export class PhaseTracker {
 				requirements: this.requirements, // RequirementInventory
 				phaseStates: this.phaseStates, // PhaseState[]
 				currentPhaseIndex: this.currentPhaseIndex, // number
-				executionConfig: this.executionConfig, // any
-				checkpointEnabled: this.checkpointEnabled, // boolean
-				checkpointFrequency: this.checkpointFrequency, // "phase" | "subtask" | "never"
 			}
 			const content = JSON.stringify(checkpointData, null, 2)
 
@@ -559,9 +571,6 @@ export class PhaseTracker {
 			)
 			tracker.phaseStates = checkpoint.phaseStates
 			tracker.currentPhaseIndex = checkpoint.currentPhaseIndex
-			tracker.executionConfig = checkpoint.executionConfig
-			tracker.checkpointEnabled = checkpoint.checkpointEnabled
-			tracker.checkpointFrequency = checkpoint.checkpointFrequency
 
 			// Restored phase checkpoint
 			return tracker
@@ -570,4 +579,48 @@ export class PhaseTracker {
 			return undefined
 		}
 	}
+}
+
+/**
+ * Separates multi-line text into lines and returns them as a cleaned array.
+ * - Removes empty lines.
+ * - Trims whitespace from the beginning and end of each line.
+ * - Optionally removes indentation or list markers (-, *, 1., etc.).
+ */
+function splitAndCleanLines(text: string, removeListMarkers: boolean = false): string[] {
+	if (!text) {
+		return [];
+	}
+	
+	// Split into lines
+	const lines = text.split(/\r?\n/);
+	const result: string[] = [];
+	
+	for (let line of lines) {
+		line = line.trim();
+		
+		if (!line) {
+			continue;
+		}
+		
+		// Remove list markers (optional)
+		if (removeListMarkers) {
+			// Numbered list (1., 2., etc.)
+			line = line.replace(/^\d+\.\s*/, '');
+			// Bullet list (-, *, • etc.)
+			line = line.replace(/^[-*•]\s*/, '');
+		}
+		
+		result.push(line);
+	}
+	
+	return result;
+}
+
+/**
+ * Extracts the content of a specific tag and returns it as an array of lines.
+ */
+function extractTagAsLines(tag: string, source: string, removeListMarkers: boolean = false): string[] {
+	const content = extractTag(tag, source);
+	return splitAndCleanLines(content, removeListMarkers);
 }

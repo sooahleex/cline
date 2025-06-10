@@ -142,7 +142,6 @@ export class Task {
 	private reinitExistingTaskFromId: (taskId: string) => Promise<void>
 	private cancelTask: () => Promise<void>
 	private sidebarController: Controller
-	private outputChannel: vscode.OutputChannel
 
 	readonly taskId: string
 	private taskIsFavorited?: boolean
@@ -215,7 +214,6 @@ export class Task {
 		browserSettings: BrowserSettings,
 		chatSettings: ChatSettings,
 		sidebarController: Controller,
-		outputChannel: vscode.OutputChannel,
 		phaseTracker: PhaseTracker,
 		isPhaseRoot: boolean = false,
 		shellIntegrationTimeout: number,
@@ -237,7 +235,6 @@ export class Task {
 		this.reinitExistingTaskFromId = reinitExistingTaskFromId
 		this.cancelTask = cancelTask
 		this.sidebarController = sidebarController
-		this.outputChannel = outputChannel
 		this.phaseTracker = phaseTracker
 		this.isPhaseRoot = isPhaseRoot
 		this.clineIgnoreController = new ClineIgnoreController(cwd)
@@ -1051,14 +1048,16 @@ export class Task {
 
 		// Planning Phase
 		if (this.isPhaseRoot) {
-			await this.executePlanningPhase(userContent)
+			// await this.executePlanningPhase(userContent)
+			await this.executePlanningPhase(phaseAwarePrompt)
 		}
 
 		// Execution Phase
 		await this.executeCurrentPhase()
 	}
 
-	private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
+	// private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
+	private async executePlanningPhase(userBlocks: string): Promise<void> {
 		// API 호출 대신 고정된 plan.txt 파일 사용
 		// const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
 		if (!this.phaseTracker) {
@@ -1066,7 +1065,8 @@ export class Task {
 		}
 
 		// 고정된 plan.txt 파일에서 플랜 로드 (extension context 전달)
-		const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context)
+		// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context)
+		const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromOutput(userBlocks)
 		this.phaseTracker!.projOverview = projOverview
 		this.phaseTracker!.executionPlan = executionPlan
 		this.phaseTracker!.requirements = requirements
