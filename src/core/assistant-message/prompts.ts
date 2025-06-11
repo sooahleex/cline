@@ -143,9 +143,9 @@ function parseSubtaskContent(phaseDescription: string): ParsedSubtaskInfo {
  *
  * @param phase          The Phase record returned by PhaseTracker.currentPhase
  * @param total          Total number of phases in the roadmap
- * @param originalPrompt The very first user request – shown verbatim for context
+ * @param projectOverview The very first user request – shown verbatim for context
  */
-export function buildPhasePrompt(phase: Phase, total: number, originalPrompt: string): string {
+export function buildPhasePrompt(phase: Phase, total: number, projectOverview: string): string {
 	// Parse detailed information from the phase description
 	// const parsedInfo = parseSubtaskContent(phase.description || "")
 
@@ -169,7 +169,7 @@ ${requirements}
 	// Build core objective section
 	let objectiveSection = ""
 	if (phase.coreObjectives && phase.coreObjectives.length > 0) {
-		const coreObjectives = phase.coreObjectives.map((obj) => `<core_objective>${obj}</core_objective>`).join("\n")
+		const coreObjectives = phase.coreObjectives.map((obj) => `${obj}`).join("\n")
 		objectiveSection = `<core_objective>
 ${coreObjectives}
 </core_objective>
@@ -180,9 +180,7 @@ ${coreObjectives}
 	// Build functional requirements section
 	let functionalSection = ""
 	if (phase.functionalRequirements && phase.functionalRequirements.length > 0) {
-		const functionalRequirements = phase.functionalRequirements
-			.map((req) => `<functional_requirement>${req}</functional_requirement>`)
-			.join("\n")
+		const functionalRequirements = phase.functionalRequirements.map((req) => `${req}`).join("\n")
 		functionalSection = `<functional_requirements>
 ${functionalRequirements}
 </functional_requirements>
@@ -204,7 +202,9 @@ ${deliverables}
 	// Build completion criteria section
 	let completionSection = ""
 	if (phase.completionCriteria && phase.completionCriteria.length > 0) {
-		const criteria = phase.completionCriteria.map((criteria) => `<criterion>${criteria}</criterion>`).join("\n")
+		const criteria = phase.completionCriteria
+			.map((item) => `<criterion>${item.index}. ${item.description}</criterion>`)
+			.join("\n")
 		completionSection = `<completion_criteria>
 ${criteria}
 </completion_criteria>
@@ -215,9 +215,7 @@ ${criteria}
 	// Build quality requirements section
 	let qualitySection = ""
 	if (phase.nonFunctionalRequirements && phase.nonFunctionalRequirements.length > 0) {
-		const nonFunctionalRequirements = phase.nonFunctionalRequirements
-			.map((req) => `<non_functional_requirement>${req}</non_functional_requirement>`)
-			.join("\n")
+		const nonFunctionalRequirements = phase.nonFunctionalRequirements.map((req) => `${req}`).join("\n")
 		qualitySection = `<quality_requirements>
 ${nonFunctionalRequirements}
 </quality_requirements>
@@ -228,7 +226,9 @@ ${nonFunctionalRequirements}
 	// Build handoff checklist section
 	let handoffSection = ""
 	if (phase.handoffChecklist && phase.handoffChecklist.length > 0) {
-		const checklist = phase.handoffChecklist.map((item) => `<checklist_item>${item}</checklist_item>`).join("\n")
+		const checklist = phase.handoffChecklist
+			.map((item) => `<checklist_item>${item.index}. ${item.description}</checklist_item>`)
+			.join("\n")
 		handoffSection = `<handoff_checklist>
 ${checklist}
 </handoff_checklist>
@@ -251,7 +251,7 @@ ${checklist}
 </phase_info>
 
 <original_user_request>
-${originalPrompt.trim()}
+${projectOverview.trim()}
 </original_user_request>
 
 ${objectiveSection}${requirementsSection}${functionalSection}<relevant_files>

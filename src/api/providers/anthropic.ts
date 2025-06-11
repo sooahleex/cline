@@ -48,7 +48,7 @@ export class AnthropicHandler implements ApiHandler {
 					{
 						model: modelId,
 						thinking: reasoningOn ? { type: "enabled", budget_tokens: budget_tokens } : undefined,
-						max_tokens: model.info.maxTokens || 8192,
+						max_tokens: model.info.maxTokens || 8192, // TODO: (sa)
 						// "Thinking isn’t compatible with temperature, top_p, or top_k modifications as well as forced tool use."
 						// (https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking)
 						temperature: reasoningOn ? undefined : 0,
@@ -120,7 +120,7 @@ export class AnthropicHandler implements ApiHandler {
 			default: {
 				stream = await this.client.messages.create({
 					model: modelId,
-					max_tokens: model.info.maxTokens || 8192,
+					max_tokens: model.info.maxTokens || 8192, //TODO: (sa)
 					temperature: 0,
 					system: [{ text: systemPrompt, type: "text" }],
 					messages,
