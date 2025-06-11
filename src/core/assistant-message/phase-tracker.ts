@@ -155,11 +155,7 @@ function extractRequirement(source: string): string[] {
 	const relatedRequirements: string[] = []
 	for (const rawLine of lines) {
 		const line = rawLine.trim()
-		const reqMatch = line.match(/^-+\s*(REQ-\d{3})\s*:\s*(.+)$/i)
-		if (reqMatch) {
-			const [, id] = reqMatch
-			relatedRequirements.push(id)
-		}
+		relatedRequirements.push(line)
 	}
 	return relatedRequirements
 }
@@ -441,6 +437,24 @@ export class PhaseTracker {
 			return
 		}
 
+		// Function to process all checklist items in batch
+		const markSubtasksComplete = (subtasks?: Subtask[]) => {
+			if (subtasks?.length) {
+				subtasks.forEach((subtask) => (subtask.completed = true))
+			}
+		}
+
+		// Mark all checklist items as completed
+		markSubtasksComplete(phase.phase?.completionCriteria)
+		markSubtasksComplete(phase.phase?.handoffChecklist)
+
+		// Handle additional checklists for the FINAL phase
+		if (phase.phase?.originalRequirementsValidations || phase.phase?.finalDeliverables) {
+			markSubtasksComplete(phase.phase.originalRequirementsValidations)
+			markSubtasksComplete(phase.phase.finalDeliverables)
+		}
+
+		// Update status
 		phase.complete = true
 		phase.status = "completed"
 		phase.endTime = Date.now()
@@ -479,6 +493,14 @@ export class PhaseTracker {
 		const p = this.phaseStates[this.currentPhaseIndex]
 		if (!p || !p.phase) {
 			throw new Error(`Phase ${this.currentPhaseIndex} is not properly initialized: missing phase data`)
+		}
+		return p.phase
+	}
+
+	public getPhaseByIdx(index: number): Phase {
+		const p = this.phaseStates[index]
+		if (!p || !p.phase) {
+			throw new Error(`Phase ${index} is not properly initialized: missing phase data`)
 		}
 		return p.phase
 	}
