@@ -63,14 +63,13 @@ export class Controller {
 
 	private disposables: vscode.Disposable[] = []
 	task?: Task
-	private phaseTracker?: PhaseTracker
+	public phaseTracker?: PhaseTracker
 	workspaceTracker: WorkspaceTracker
 	mcpHub: McpHub
 	accountService: ClineAccountService
 	latestAnnouncementId = "may-22-2025_16:11:00" // update to some unique identifier when we add a new announcement
 
 	private phaseTaskCallbacks: Map<number, (result: string) => void> = new Map()
-	private phaseData: Map<string, any> = new Map()
 
 	constructor(
 		readonly context: vscode.ExtensionContext,
@@ -164,28 +163,26 @@ export class Controller {
 			taskHistory,
 		} = await getAllExtensionState(this.context)
 
-		// If phaseTracker already exists, reuse it, otherwise create a new one
-		let newTracker: PhaseTracker
+		// Initialize PhaseTracker based on priority
+		let newTracker: PhaseTracker | undefined
+
 		if (historyItem) {
 			// Restore from checkpoint
-			const trackerFromCheckpoint = await PhaseTracker.fromCheckpoint(this)
-			if (trackerFromCheckpoint) {
-				newTracker = trackerFromCheckpoint
-			} else {
-				// Log error and notify user about checkpoint loading failure
+			newTracker = await PhaseTracker.fromCheckpoint(this)
+			if (!newTracker) {
 				const errorMsg = "Failed to load task checkpoint. Unable to restore previous state."
 				this.outputChannel.appendLine(errorMsg)
 				vscode.window.showErrorMessage(errorMsg)
 				throw new Error(errorMsg)
 			}
-		} else if (this.phaseTracker) {
-			// Reuse the tracker already existing in memory
+		} else if (this.phaseTracker?.isAllComplete() === false) {
+			// Reuse existing tracker if not complete
 			newTracker = this.phaseTracker
 		} else {
-			// Completely new
-			// const { projOverview, executionPlan, requirements } = await parsePlanFromOutput(task ?? "")
+			// Create new PhaseTracker
 			newTracker = new PhaseTracker("", "", {}, this)
 		}
+
 		this.phaseTracker = newTracker
 
 		// isPhaseRoot is only true when it's a "truly new task"
@@ -1098,6 +1095,7 @@ export class Controller {
 		}
 		this.task?.abortTask()
 		this.task = undefined // removes reference to it, so once promises end it will be garbage collected
+		// this.phaseTracker = undefined // removes reference to it, so once promises end it will be garbage collected
 
 		try {
 			const workspaceFolder = vscode.workspace.workspaceFolders?.[0]
@@ -1287,13 +1285,16 @@ Commit message:`
 			return
 		}
 
+		const currentIndex = tracker.currentPhaseIndex
+		const current = tracker.phaseStates[currentIndex]
+		if (!current.status || current.status === "in-progress") {
+			tracker.completePhase(currentIndex)
+		}
+
 		if (tracker.hasNextPhase()) {
 			await tracker
 				.moveToNextPhase(openNewTask)
 				.catch((err) => this.outputChannel.appendLine(`Error moving to next phase: ${err}`))
-		}
-		if (tracker.isAllComplete()) {
-			await this.onTaskCompleted()
 		}
 	}
 
@@ -1308,12 +1309,8 @@ Commit message:`
 			this.phaseTaskCallbacks.set(phaseId, (result) => {
 				resolve(result)
 			})
-			this.spawnNewTask(phasePrompt)
+			this.initTask(phasePrompt)
 		})
-	}
-
-	public setPhaseData(phaseId: string, data: any): void {
-		this.phaseData.set(phaseId, data)
 	}
 
 	// dev

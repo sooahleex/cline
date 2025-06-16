@@ -86,7 +86,9 @@ function extractTagContent(content: string, tagName: string): string | null {
 
 function extractListContent(content: string, tagName: string): string[] {
 	const extracted = extractTagContent(content, tagName)
-	if (!extracted) return []
+	if (!extracted) {
+		return []
+	}
 
 	// 리스트 아이템들을 추출 (- 로 시작하는 라인들)
 	const lines = extracted
@@ -101,7 +103,9 @@ function extractListContent(content: string, tagName: string): string[] {
 
 function extractRequirements(content: string): string[] {
 	const reqSection = extractTagContent(content, "related_input_requirements")
-	if (!reqSection) return []
+	if (!reqSection) {
+		return []
+	}
 
 	// REQ-XXX 형태의 요구사항들을 추출
 	const reqRegex = /- (REQ-\d+): "(.+?)"/g

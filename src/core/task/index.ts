@@ -118,7 +118,6 @@ import { saveClineMessagesAndUpdateHistory } from "./message-state"
 import { PhaseTracker, parsePlanFromOutput, parsePlanFromFixedFile } from "../assistant-message/phase-tracker"
 import { PROMPTS, buildPhasePrompt } from "../assistant-message/prompts"
 import { Controller } from "../controller"
-import { parse } from "node:path"
 
 export const USE_EXPERIMENTAL_CLAUDE4_FEATURES = false
 
@@ -1036,7 +1035,7 @@ export class Task {
 		} else {
 			userContent = [{ type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
 		}
-		if (files && files.length > 0) {
+		if (files?.length) {
 			const fileContentString = await processFilesIntoText(files)
 			if (fileContentString) {
 				userContent.push({
@@ -1066,6 +1065,7 @@ export class Task {
 
 		// 고정된 plan.txt 파일에서 플랜 로드 (extension context 전달)
 		// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context)
+		// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromOutput(firstAssistantMessage)
 		const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromOutput(userBlocks)
 		this.phaseTracker!.projOverview = projOverview
 		this.phaseTracker!.executionPlan = executionPlan
@@ -1096,23 +1096,22 @@ export class Task {
 		if (!this.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
+		while (!this.phaseTracker!.isAllComplete()) {
+			const phase = this.phaseTracker.currentPhase
+			const total = this.phaseTracker.totalPhases
+			const phaseIndex = this.phaseTracker.currentPhaseIndex
+			const prompt = buildPhasePrompt(phase, total, this.phaseTracker.getProjectOverview())
 
-		const phase = this.phaseTracker.currentPhase
-		const total = this.phaseTracker.totalPhases
-		const phaseIndex = this.phaseTracker.currentPhaseIndex
-		const currentPhasePrompt = buildPhasePrompt(phase, total, this.phaseTracker.getProjectOverview())
-		if (!this.newPhaseOpened) {
-			await this.sidebarController.spawnPhaseTask(currentPhasePrompt, phaseIndex)
-		} else {
-			this.isPhaseRoot = false
-			await this.runSinglePhase(currentPhasePrompt)
+			if (!this.newPhaseOpened) {
+				await this.sidebarController.spawnPhaseTask(prompt, phaseIndex)
+			} else {
+				this.isPhaseRoot = false
+				await this.runSinglePhase(prompt)
+			}
+			this.newPhaseOpened = false
 		}
-		this.newPhaseOpened = false
-		if (this.phaseTracker.isAllComplete()) {
-			await this.say("text", "All phases completed successfully!")
-			this.sidebarController.onTaskCompleted()
-		}
-		this.executeCurrentPhase()
+		await this.say("text", "All phases completed successfully!")
+		this.sidebarController.onTaskCompleted()
 	}
 
 	public async runSinglePhase(currentPhasePrompt: string): Promise<void> {
@@ -1124,7 +1123,7 @@ export class Task {
 
 		const phaseFinished = await this.initiateTaskLoop(userBlocks)
 		if (phaseFinished) {
-			this.sidebarController.onPhaseCompleted(this)
+			this.sidebarController.onTaskCompleted()
 		}
 	}
 
@@ -3835,7 +3834,7 @@ export class Task {
 									)
 								} else {
 									// If no response, the user clicked the "Create New Task" button
-									await this.sidebarController.spawnNewTask(context)
+									// await this.sidebarController.spawnNewTask(context)
 									pushToolResult(
 										formatResponse.toolResult(`The user has created a new task with the provided context.`),
 									)
@@ -4429,29 +4428,41 @@ export class Task {
 								let images: string[] | undefined
 								let completionFiles: string[] | undefined
 
-								if (this.phaseFinished && !this.phaseTracker?.isAllComplete()) {
-									// TODO: (sa)
-									this.sidebarController.onPhaseCompleted(this, /* openNewTask */ true)
+								this.sidebarController.onPhaseCompleted(this, /* openNewTask */ true)
+								if (this.phaseFinished) {
+									if (this.phaseTracker?.isAllComplete()) {
+										const {
+											response,
+											text,
+											images,
+											files: completionFiles,
+										} = await this.ask("completion_result", "", false)
+										await this.say("user_feedback", text ?? "", images, completionFiles)
+										await this.saveCheckpoint()
+										if (response === "yesButtonClicked") {
+											pushToolResult("") // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
+											break
+										}
+									} else {
+										const phase = this.phaseTracker?.currentPhase
+										const total = this.phaseTracker?.totalPhases
+										const nextPhasePrompt = phase
+											? buildPhasePrompt(phase, total ?? 1, this.phaseTracker?.getProjectOverview() || "")
+											: ""
+										const {
+											response,
+											text,
+											images,
+											files: newTaskFiles,
+										} = await this.ask("new_task", nextPhasePrompt, false)
 
-									const phase = this.phaseTracker?.currentPhase
-									const total = this.phaseTracker?.totalPhases
-									const nexPhasePrompt = phase
-										? buildPhasePrompt(phase, total ?? 1, this.phaseTracker?.getProjectOverview() || "")
-										: ""
-									const {
-										response,
-										text,
-										images,
-										files: newTaskFiles,
-									} = await this.ask("new_task", nexPhasePrompt, false)
-
-									await this.say("user_feedback", text ?? "", images, completionFiles)
-									await this.saveCheckpoint()
-									if (response === "yesButtonClicked") {
-										pushToolResult("") // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
-										break
+										await this.say("user_feedback", text ?? "", images, newTaskFiles)
+										await this.saveCheckpoint()
+										if (response === "yesButtonClicked") {
+											pushToolResult("") // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
+											break
+										}
 									}
-									// await this.ask("new_task", "Start Next Phase", false);
 								} else {
 									const {
 										response,
