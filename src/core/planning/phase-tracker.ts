@@ -1,6 +1,6 @@
 // src/core/assistant-message/phase-tracker.ts
 import { Controller } from "../controller"
-import { buildPhasePrompt } from "./prompts"
+import { buildPhasePrompt } from "./build_prompt"
 import * as vscode from "vscode"
 
 export enum PhaseStatus {
@@ -94,7 +94,8 @@ export function parseExecutionPlan(raw: string): string {
 	const planRegex = /<execution_plan>([\s\S]*?)<\/execution_plan>/i
 	const planMatch = raw.match(planRegex)
 	if (!planMatch) {
-		throw new Error("No execution plan section found in the input text")
+		// throw new Error("No execution plan section found in the input text")
+		return ""
 	}
 	const executionPlan = planMatch[1].trim()
 	return executionPlan

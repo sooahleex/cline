@@ -21,13 +21,10 @@ const NICE_JS_OUT_DIR = path.join(ROOT_DIR, "src/generated/nice-grpc")
 const DESCRIPTOR_OUT_DIR = path.join(ROOT_DIR, "dist-standalone/proto")
 
 const isWindows = process.platform === "win32"
-<<<<<<< HEAD
 const TS_PROTO_PLUGIN = isWindows
 	? path.join(ROOT_DIR, "node_modules", ".bin", "protoc-gen-ts_proto.cmd") // Use the .bin directory path for Windows
 	: require.resolve("ts-proto/protoc-gen-ts_proto")
 
-=======
->>>>>>> 6da91a6e (fix: fix build-proto)
 const TS_PROTO_OPTIONS = [
 	"env=node",
 	"esModuleInterop=true",
@@ -68,24 +65,6 @@ const hostServiceDirs = Object.keys(hostServiceNameMap).map((serviceKey) => path
 async function main() {
 	console.log(chalk.bold.blue("Starting Protocol Buffer code generation..."))
 
-	// Setup TS_PROTO_PLUGIN for Windows
-	let TS_PROTO_PLUGIN
-	if (isWindows) {
-		const batchFilePath = path.join(SCRIPT_DIR, "protoc-gen-ts_proto.cmd")
-		const tsProtoPath = require.resolve("ts-proto/protoc-gen-ts_proto")
-
-		try {
-			await fs.access(batchFilePath)
-		} catch {
-			// Create batch file if it doesn't exist
-			const batchContent = `@echo off\nnode "${tsProtoPath}" %*`
-			await fs.writeFile(batchFilePath, batchContent)
-		}
-		TS_PROTO_PLUGIN = batchFilePath
-	} else {
-		TS_PROTO_PLUGIN = require.resolve("ts-proto/protoc-gen-ts_proto")
-	}
-
 	// Check for Apple Silicon compatibility before proceeding
 	checkAppleSiliconCompatibility()
 
@@ -103,11 +82,11 @@ async function main() {
 	const protoFiles = await globby("**/*.proto", { cwd: SCRIPT_DIR, realpath: true })
 	console.log(chalk.cyan(`Processing ${protoFiles.length} proto files from`), SCRIPT_DIR)
 
-	tsProtoc(TS_OUT_DIR, protoFiles, TS_PROTO_OPTIONS, TS_PROTO_PLUGIN)
+	tsProtoc(TS_OUT_DIR, protoFiles, TS_PROTO_OPTIONS)
 	// grpc-js is used to generate service impls for the ProtoBus service.
-	tsProtoc(GRPC_JS_OUT_DIR, protoFiles, ["outputServices=grpc-js,outputClientImpl=false", ...TS_PROTO_OPTIONS], TS_PROTO_PLUGIN)
+	tsProtoc(GRPC_JS_OUT_DIR, protoFiles, ["outputServices=grpc-js,outputClientImpl=false", ...TS_PROTO_OPTIONS])
 	// nice-js is used for the Host Bridge client impls because it uses promises.
-	tsProtoc(NICE_JS_OUT_DIR, protoFiles, ["outputServices=nice-grpc,useExactTypes=false", ...TS_PROTO_OPTIONS], TS_PROTO_PLUGIN)
+	tsProtoc(NICE_JS_OUT_DIR, protoFiles, ["outputServices=nice-grpc,useExactTypes=false", ...TS_PROTO_OPTIONS])
 
 	const descriptorFile = path.join(DESCRIPTOR_OUT_DIR, "descriptor_set.pb")
 	const descriptorProtocCommand = [
@@ -138,12 +117,12 @@ async function main() {
 	console.log(chalk.bold.blue("Finished Protocol Buffer code generation."))
 }
 
-async function tsProtoc(outDir, protoFiles, protoOptions, tsProtoPlugin) {
+async function tsProtoc(outDir, protoFiles, protoOptions) {
 	// Build the protoc command with proper path handling for cross-platform
 	const command = [
 		PROTOC,
 		`--proto_path="${SCRIPT_DIR}"`,
-		`--plugin=protoc-gen-ts_proto="${tsProtoPlugin}"`,
+		`--plugin=protoc-gen-ts_proto="${TS_PROTO_PLUGIN}"`,
 		`--ts_proto_out="${outDir}"`,
 		`--ts_proto_opt=${protoOptions.join(",")} `,
 		...protoFiles.map((s) => `"${s}"`),

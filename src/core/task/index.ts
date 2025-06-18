@@ -115,8 +115,9 @@ import { featureFlagsService } from "@services/posthog/feature-flags/FeatureFlag
 import { StreamingJsonReplacer, ChangeLocation } from "@core/assistant-message/diff-json"
 import { isClaude4ModelFamily } from "@utils/model-utils"
 import { saveClineMessagesAndUpdateHistory } from "./message-state"
-import { PhaseTracker, parsePlanFromOutput, parsePlanFromFixedFile } from "../assistant-message/phase-tracker"
-import { PROMPTS, buildPhasePrompt } from "../assistant-message/prompts"
+import { PhaseTracker, parsePlanFromOutput, parsePlanFromFixedFile } from "../planning/phase-tracker"
+import { buildPhasePrompt } from "../planning/build_prompt"
+import { PROMPTS } from "../planning/planning_prompt"
 import { Controller } from "../controller"
 
 export const USE_EXPERIMENTAL_CLAUDE4_FEATURES = false
@@ -345,6 +346,26 @@ export class Task {
 			throw new Error("Unable to access extension context")
 		}
 		return context
+	}
+
+	// Create a temporary API handler with a specific model
+	private createTemporaryApiHandler(modelName: string): ApiHandler {
+		// Copy the current API configuration directly from this.api
+		// We need to maintain the original API's configuration and just change the model
+		const currentApi = this.api
+
+		// Create a new configuration with the specified model
+		// Get apiProvider and other properties directly from the original API
+		const tempConfig: ApiConfiguration = {
+			...(currentApi as any).options, // Directly access the options property if it exists
+			apiProvider: (currentApi as any).options?.apiProvider,
+			apiKey: (currentApi as any).options?.apiKey,
+			apiModelId: modelName, // Override with the requested model
+			taskId: this.taskId, // Ensure task ID is preserved
+		}
+
+		// Build and return the temporary API handler
+		return buildApiHandler(tempConfig)
 	}
 
 	// Storing task to disk for history
@@ -1047,26 +1068,25 @@ export class Task {
 
 		// Planning Phase
 		if (this.isPhaseRoot) {
-			// await this.executePlanningPhase(userContent)
-			await this.executePlanningPhase(phaseAwarePrompt)
+			await this.executePlanningPhase(userContent)
+			// await this.executePlanningPhase(phaseAwarePrompt)
 		}
 
 		// Execution Phase
 		await this.executeCurrentPhase()
 	}
 
-	// private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
-	private async executePlanningPhase(userBlocks: string): Promise<void> {
-		// API 호출 대신 고정된 plan.txt 파일 사용
-		// const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
+	private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
+		// private async executePlanningPhase(userBlocks: string): Promise<void> {
+		const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
 		if (!this.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
 
 		// 고정된 plan.txt 파일에서 플랜 로드 (extension context 전달)
 		// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context)
-		// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromOutput(firstAssistantMessage)
-		const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromOutput(userBlocks)
+		const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromOutput(firstAssistantMessage)
+		// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromOutput(userBlocks)
 		this.phaseTracker!.projOverview = projOverview
 		this.phaseTracker!.executionPlan = executionPlan
 		this.phaseTracker!.requirements = requirements
@@ -1369,13 +1389,16 @@ export class Task {
 		}
 
 		// reuse the existing streaming machinery
-		const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1)
+		const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1, "claude-sonnet-4-20250514")
 		let assistantText = ""
+		const start = performance.now()
 		for await (const chunk of firstStream) {
 			if (chunk.type === "text") {
 				assistantText += chunk.text
 			}
 		}
+		const end = performance.now()
+		console.log("Plan phase took", (end - start) / 1000, "seconds")
 
 		// persist to history, so the Controller sees it if needed
 		await this.say("api_req_finished")
@@ -1859,7 +1882,7 @@ export class Task {
 		}
 	}
 
-	async *attemptApiRequest(previousApiReqIndex: number): ApiStream {
+	async *attemptApiRequest(previousApiReqIndex: number, forceModel?: string): ApiStream {
 		// Wait for MCP servers to be connected before generating system prompt
 		await pWaitFor(() => this.mcpHub.isConnecting !== true, { timeout: 10_000 }).catch(() => {
 			console.error("MCP servers failed to connect in time")
@@ -1943,8 +1966,14 @@ export class Task {
 				this.updateTaskHistory,
 			) // saves task history item which we use to keep track of conversation history deleted range
 		}
-
-		let stream = this.api.createMessage(systemPrompt, contextManagementMetadata.truncatedConversationHistory)
+		// Use forced model if specified, otherwise use default api
+		let stream
+		if (this.isPhaseRoot) {
+			const apiToUse = forceModel ? this.createTemporaryApiHandler(forceModel) : this.api
+			stream = apiToUse.createMessage(systemPrompt, contextManagementMetadata.truncatedConversationHistory)
+		} else {
+			stream = this.api.createMessage(systemPrompt, contextManagementMetadata.truncatedConversationHistory)
+		}
 
 		const iterator = stream[Symbol.asyncIterator]()
 
