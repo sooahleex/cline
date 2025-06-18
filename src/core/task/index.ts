@@ -57,6 +57,7 @@ import {
 	ClineApiReqCancelReason,
 	ClineApiReqInfo,
 	ClineAsk,
+	ClineAskQuestion,
 	ClineMessage,
 	ClineSay,
 	COMMAND_CANCEL_TOKEN,
@@ -95,6 +96,7 @@ import { PROMPTS } from "../planning/planning_prompt"
 import { StateManager } from "../storage/StateManager"
 import { FocusChainManager } from "./focus-chain"
 import { MessageStateHandler } from "./message-state"
+import { refinePrompt } from "./prompt-refinement"
 import { TaskState } from "./TaskState"
 import { ToolExecutor } from "./ToolExecutor"
 import { detectAvailableCliTools, extractProviderDomainFromUrl, updateApiReqMsg } from "./utils"
@@ -237,6 +239,9 @@ export class Task {
 
 	// Message and conversation state
 	messageStateHandler: MessageStateHandler
+	// conversationHistoryDeletedRange?: [number, number]
+	apiConversationHistory: Anthropic.MessageParam[] = []
+	clineMessages: ClineMessage[] = []
 
 	// Workspace manager
 	workspaceManager?: WorkspaceRootManager
@@ -906,6 +911,7 @@ export class Task {
 		} catch (error) {
 			console.error("Failed to initialize ClineIgnoreController:", error)
 		}
+
 		// conversationHistory (for API) and clineMessages (for webview) need to be in sync
 		// if the extension process were killed, then on restart the clineMessages might not be empty, so we need to set it to [] when we create a new Cline client (otherwise webview would show stale messages from previous session)
 		this.messageStateHandler.setClineMessages([])
@@ -926,10 +932,82 @@ export class Task {
 		await this.say("text", task, images, files)
 		this.taskState.isInitialized = true
 
+		let finalTask = task
+		// Apply prompt refinement if enabled and task is provided
+		const autoApprovalSettings = this.stateManager.getGlobalSettingsKey("autoApprovalSettings")
+		if (task && autoApprovalSettings.actions.usePromptRefinement) {
+			try {
+				console.log("[Task] Applying prompt refinement...")
+				await this.say(
+					"api_req_started",
+					JSON.stringify({
+						request: "Refining prompt...",
+					}),
+				)
+
+				const updatePromptRefinementStatus = (message: string) => {
+					const lastApiReqStartedIndex = findLastIndex(this.clineMessages, (m) => m.say === "api_req_started")
+					if (lastApiReqStartedIndex !== -1) {
+						const currentApiReqInfo: ClineApiReqInfo = JSON.parse(
+							this.clineMessages[lastApiReqStartedIndex].text || "{}",
+						)
+						this.clineMessages[lastApiReqStartedIndex].text = JSON.stringify({
+							...currentApiReqInfo,
+							request: message,
+							cost: 0.001,
+						} satisfies ClineApiReqInfo)
+					}
+				}
+
+				let refinedResult = await refinePrompt(task, this.api)
+
+				updatePromptRefinementStatus("Prompt refinement completed")
+
+				// await this.saveClineMessagesAndUpdateHistory()
+				// await this.postStateToWebview()
+
+				if (refinedResult.needsMoreInfo) {
+					const questionList = refinedResult.followUpQuestions.map(
+						(followUpQ) =>
+							({
+								question: followUpQ.question,
+								options: followUpQ.options,
+								selected: "",
+							}) satisfies ClineAskQuestion,
+					)
+
+					// 2) Answer 저장
+					await this.askMoreQuestion(questionList)
+
+					// 3) Refine the prompt with the answers
+					for (const ques of questionList) {
+						task += `\n\nQ: ${ques.question}\nA: ${ques.selected}`
+						// await this.say("text", `QnA : \n\n ${JSON.stringify(ques)}`)
+					}
+
+					await this.say(
+						"api_req_started",
+						JSON.stringify({
+							request: "Refining prompt...",
+						}),
+					)
+
+					refinedResult = await refinePrompt(task, this.api)
+					// Update again after second refinement
+					updatePromptRefinementStatus("Prompt refinement completed")
+				}
+				finalTask = refinedResult.refinedPrompt
+				await this.say("text", `Refined prompt: \n${finalTask}`)
+			} catch (error) {
+				console.error("[Task] Prompt refinement failed:", error)
+				// Continue with original prompt if refinement fails
+			}
+		}
+
 		const imageBlocks: Anthropic.ImageBlockParam[] = formatResponse.imageBlocks(images)
 		let userContent: UserContent = []
 		if (this.isPhaseRoot) {
-			userContent = [{ type: "text", text: `${PROMPTS.PLANNING}\n\n<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
+			userContent = [{ type: "text", text: `${PROMPTS.PLANNING}\n\n<task>\n${finalTask}\n</task>` }, ...imageBlocks]
 		} else {
 			userContent = [{ type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
 		}
@@ -1114,7 +1192,26 @@ export class Task {
 		}
 	}
 
-	public async resumeTaskFromHistory() {
+	async askMoreQuestion(questionList: ClineAskQuestion[]): Promise<ClineAskQuestion[]> {
+		for (const ques of questionList) {
+			const sharedMessage = {
+				question: ques.question,
+				options: ques.options,
+			} satisfies ClineAskQuestion
+
+			const {
+				text,
+				// images,
+				// files: followupFiles,
+			} = await this.ask("followup", JSON.stringify(sharedMessage), false)
+
+			await this.say("text", `Here is the answer: ${text}`)
+			ques.selected = text
+		}
+		return questionList
+	}
+
+	private async resumeTaskFromHistory() {
 		try {
 			await this.clineIgnoreController.initialize()
 		} catch (error) {
@@ -1379,8 +1476,6 @@ export class Task {
 	}
 
 	private async initiateTaskLoop(userContent: UserContent): Promise<boolean | void> {
-		await this.messageStateHandler.addToApiConversationHistory({ role: "user", content: userContent })
-
 		let nextUserContent = userContent
 		let includeFileDetails = true
 		while (!this.taskState.abort) {

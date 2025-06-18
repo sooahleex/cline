@@ -61,6 +61,13 @@ export const ACTION_METADATA: ActionMetadata[] = [
 		description: "Allows Cline to use configured MCP servers which may modify filesystem or interact with APIs.",
 		icon: "codicon-server",
 	},
+	{
+		id: "usePromptRefinement",
+		label: "Use prompt refinement",
+		shortName: "Prompt Refinement",
+		description: "Allows Cline to refine and improve your prompts for better task understanding and execution.",
+		icon: "codicon-sparkle",
+	},
 ]
 
 export const NOTIFICATIONS_SETTING: ActionMetadata = {

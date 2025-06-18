@@ -1260,6 +1260,8 @@ func (m *Manager) UpdateTaskAutoApprovalAction(ctx context.Context, actionKey st
 		settings.AutoApprovalSettings.Actions.UseBrowser = truePtr
 	case "use_mcp":
 		settings.AutoApprovalSettings.Actions.UseMcp = truePtr
+	case "use_prompt_refinement":
+		settings.AutoApprovalSettings.Actions.UsePromptRefinement = truePtr
 	default:
 		return fmt.Errorf("unknown auto-approval action: %s", actionKey)
 	}
