@@ -64,6 +64,7 @@ async function updateAutoApprovalSettings(controller?: Controller) {
 				executeAllCommands: true,
 				useBrowser: false, // Keep browser disabled for tests
 				useMcp: false, // Keep MCP disabled for tests
+				usePromptRefinement: true, // Enable prompt refinement for tests
 			},
 			maxRequests: 10000, // Increase max requests for tests
 		}
