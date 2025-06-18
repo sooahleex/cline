@@ -16,6 +16,13 @@ export const ACTION_METADATA: ActionMetadata[] = [
 		icon: "codicon-checklist",
 	},
 	{
+		id: "usePromptRefinement",
+		label: "Use prompt refinement",
+		shortName: "Prompt Refinement",
+		description: "Allows Cline to refine and improve your prompts for better task understanding and execution.",
+		icon: "codicon-sparkle",
+	},
+	{
 		id: "readFiles",
 		label: "Read project files",
 		shortName: "Read",
@@ -74,7 +81,7 @@ export const ACTION_METADATA: ActionMetadata[] = [
 		shortName: "MCP",
 		description: "Allows Cline to use configured MCP servers which may modify filesystem or interact with APIs.",
 		icon: "codicon-server",
-	},
+	}
 ]
 
 export const NOTIFICATIONS_SETTING: ActionMetadata = {
