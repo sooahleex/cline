@@ -1037,14 +1037,14 @@ export class Task {
 		await this.postStateToWebview()
 
 		let phaseAwarePrompt: string
-		if (this.phaseTracker) {
-			const phase = this.phaseTracker.currentPhase
-			phaseAwarePrompt = this.isPhaseRoot
-				? (task ?? "")
-				: buildPhasePrompt(phase, this.phaseTracker.totalPhases, this.phaseTracker.getProjectOverview())
-		} else {
-			phaseAwarePrompt = task ?? ""
-		}
+		phaseAwarePrompt =
+			this.phaseTracker && !this.isPhaseRoot
+				? buildPhasePrompt(
+						this.phaseTracker.currentPhase,
+						this.phaseTracker.totalPhases,
+						this.phaseTracker.getProjectOverview(),
+					)
+				: (task ?? "")
 
 		await this.say("text", task, images)
 		this.isInitialized = true
@@ -1392,13 +1392,46 @@ export class Task {
 		const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1, "claude-sonnet-4-20250514")
 		let assistantText = ""
 		const start = performance.now()
+
+		// Create a partial message for streaming updates
+		await this.say("text", "Planning in progress...", undefined, undefined, true)
+
+		// Track progress
+		let totalChunks = 0
+		let lastUpdateTime = Date.now()
+		const updateInterval = 250 // Update UI every 250ms to avoid too many updates
+
+		// Process stream chunks and update UI with thinking progress
 		for await (const chunk of firstStream) {
 			if (chunk.type === "text") {
 				assistantText += chunk.text
+				totalChunks++
+
+				// Update UI periodically to show progress without overwhelming it
+				const now = Date.now()
+				if (now - lastUpdateTime > updateInterval) {
+					// Update progress message with latest thinking content
+					// Using the partial flag to indicate this is a progressive update
+					await this.say(
+						"reasoning",
+						`Planning in progress... (${(now - start) / 1000}s)\n\n${assistantText.slice(-500)}`,
+						undefined,
+						undefined,
+						true,
+					)
+					lastUpdateTime = now
+				}
 			}
 		}
-		const end = performance.now()
-		console.log("Plan phase took", (end - start) / 1000, "seconds")
+
+		// Finalize the partial message
+		await this.say(
+			"text",
+			`Plan generated in ${((performance.now() - start) / 1000).toFixed(1)}s`,
+			undefined,
+			undefined,
+			false,
+		)
 
 		// persist to history, so the Controller sees it if needed
 		await this.say("api_req_finished")
