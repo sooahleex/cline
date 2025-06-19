@@ -33,6 +33,7 @@ import {
 	ClineApiReqCancelReason,
 	ClineApiReqInfo,
 	ClineAsk,
+	ClineAskQuestion,
 	ClineMessage,
 	ClineSay,
 	ExtensionMessage,
@@ -71,6 +72,7 @@ import {
 	getSavedApiConversationHistory,
 	getSavedClineMessages,
 	GlobalFileNames,
+	saveApiConversationHistory,
 } from "@core/storage/disk"
 import {
 	getGlobalClineRules,
@@ -155,8 +157,10 @@ export class Task {
 
 	// Message and conversation state
 	messageStateHandler: MessageStateHandler
+	// conversationHistoryDeletedRange?: [number, number]
+	apiConversationHistory: Anthropic.MessageParam[] = []
+	clineMessages: ClineMessage[] = []
 
-	// phase tracking
 	private phaseTracker?: PhaseTracker
 	private isPhaseRoot: boolean = false
 	public newPhaseOpened: boolean = true
@@ -981,6 +985,7 @@ export class Task {
 		} catch (error) {
 			console.error("Failed to initialize ClineIgnoreController:", error)
 		}
+
 		// conversationHistory (for API) and clineMessages (for webview) need to be in sync
 		// if the extension process were killed, then on restart the clineMessages might not be empty, so we need to set it to [] when we create a new Cline client (otherwise webview would show stale messages from previous session)
 		this.messageStateHandler.setClineMessages([])
@@ -1382,8 +1387,6 @@ export class Task {
 	}
 
 	private async initiateTaskLoop(userContent: UserContent): Promise<boolean | void> {
-		await this.messageStateHandler.addToApiConversationHistory({ role: "user", content: userContent })
-
 		let nextUserContent = userContent
 		let includeFileDetails = true
 		while (!this.taskState.abort) {
