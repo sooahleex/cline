@@ -505,7 +505,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 			clineAsk,
 			activeQuote,
 			autoApprovalSettings.actions.usePromptRefinement,
-			autoApprovalSettings.actions.usePlanning,
+			autoApprovalSettings.actions.usePhasePlanning,
 		],
 	)
 

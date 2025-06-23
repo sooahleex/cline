@@ -23,7 +23,7 @@ export const ACTION_METADATA: ActionMetadata[] = [
 		icon: "codicon-sparkle",
 	},
 	{
-		id: "usePlanning",
+		id: "usePhasePlanning",
 		label: "Use planning",
 		shortName: "Planning",
 		description: "Allows Cline to create detailed plans and separate into phases for complex tasks before execution.",

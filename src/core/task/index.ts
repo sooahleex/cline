@@ -328,6 +328,7 @@ export class Task {
 			this.clineIgnoreController,
 			this.workspaceTracker,
 			this.contextManager,
+			this.sidebarController,
 			this.autoApprovalSettings,
 			this.browserSettings,
 			this.chatSettings,
@@ -1069,8 +1070,8 @@ export class Task {
 
 		let imageBlocks: Anthropic.ImageBlockParam[] = formatResponse.imageBlocks(images)
 		let userContent: UserContent = []
-		if (this.autoApprovalSettings.actions.usePlanning) {
-			let phaseAwarePrompt: string
+		let phaseAwarePrompt: string = ""
+		if (this.autoApprovalSettings.actions.usePhasePlanning) {
 			phaseAwarePrompt =
 				this.phaseTracker && !this.isPhaseRoot
 					? buildPhasePrompt(
@@ -1098,7 +1099,7 @@ export class Task {
 			}
 		}
 
-		if (this.autoApprovalSettings.actions.usePlanning) {
+		if (this.autoApprovalSettings.actions.usePhasePlanning) {
 			// Planning Phase
 			if (this.isPhaseRoot) {
 				await this.executePlanningPhase(userContent)
@@ -1141,7 +1142,7 @@ export class Task {
 
 		// Mark the first phase as complete
 		this.phaseTracker.markCurrentPhaseComplete()
-		this.sidebarController.onPhaseCompleted(this)
+		this.sidebarController.onPhaseCompleted()
 
 		// Start execution of the first phase
 		this.newPhaseOpened = false
@@ -1177,7 +1178,8 @@ export class Task {
 
 		const userBlocks: UserContent = [{ type: "text", text: `<task>\n${currentPhasePrompt}\n</task>` }]
 
-		const phaseFinished = await this.initiateTaskLoop(userBlocks)
+		const phaseFinished = (await this.initiateTaskLoop(userBlocks)) || false
+		this.taskState.phaseFinished = phaseFinished
 		if (phaseFinished) {
 			this.sidebarController.onTaskCompleted()
 		}
