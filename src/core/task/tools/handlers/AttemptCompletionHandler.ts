@@ -11,6 +11,7 @@ import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordina
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { ToolResultUtils } from "../utils/ToolResultUtils"
+import { buildPhasePrompt } from "../../../planning/build_prompt"
 
 export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHandler {
 	readonly name = "attempt_completion"
@@ -122,12 +123,49 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 		if (config.messageState.getClineMessages().at(-1)?.ask === "command_output") {
 			await config.callbacks.say("command_output", "")
 		}
-		const { response, text, images, files: completionFiles } = await config.callbacks.ask("completion_result", "", false)
-		if (response === "yesButtonClicked") {
-			return "" // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
-		}
+		let text: string[] | undefined
+		let images: string[] | undefined
+		let completionFiles: string[] | undefined
+		config.sidebarController.onPhaseCompleted(/* openNewTask */ true)
+		if (config.taskState.phaseFinished) {
+			if (config.taskState.phaseTracker?.isAllComplete()) {
+				const {
+					response,
+					text,
+					images,
+					files: completionFiles,
+				} = await config.callbacks.ask("completion_result", "", false)
 
-		await config.callbacks.say("user_feedback", text ?? "", images, completionFiles)
+				if (response === "yesButtonClicked") {
+					return "" // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
+				}
+				await config.callbacks.say("user_feedback", text ?? "", images, completionFiles)
+			} else {
+				const phase = config.taskState.phaseTracker?.currentPhase
+				const total = config.taskState.phaseTracker?.totalPhases
+				const nextPhasePrompt = phase
+					? buildPhasePrompt(phase, total ?? 1, config.taskState.phaseTracker?.getProjectOverview() || "")
+					: ""
+				const {
+					response,
+					text,
+					images,
+					files: completionFiles,
+				} = await config.callbacks.ask("completion_result", nextPhasePrompt, false)
+
+				if (response === "yesButtonClicked") {
+					return "" // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
+				}
+				await config.callbacks.say("user_feedback", text ?? "", images, completionFiles)
+			}
+		} else {
+			const { response, text, images, files: completionFiles } = await config.callbacks.ask("completion_result", "", false)
+			if (response === "yesButtonClicked") {
+				return "" // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
+			}
+
+			await config.callbacks.say("user_feedback", text ?? "", images, completionFiles)
+		}
 
 		const toolResults: (Anthropic.TextBlockParam | Anthropic.ImageBlockParam)[] = []
 		if (commandResult) {
