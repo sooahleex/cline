@@ -64,6 +64,7 @@ async function updateAutoApprovalSettings(controller?: Controller) {
 				useBrowser: false, // Keep browser disabled for tests
 				useMcp: false, // Keep MCP disabled for tests
 				usePromptRefinement: true, // Enable prompt refinement for tests
+				usePhasePlanning: true, // Enable planning for tests
 			},
 		}
 

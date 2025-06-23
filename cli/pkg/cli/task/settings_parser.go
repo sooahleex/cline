@@ -465,6 +465,8 @@ func setAutoApprovalAction(actions *cline.AutoApprovalActions, key, value string
 		actions.UseMcp = boolPtr(val)
 	case "use_prompt_refinement":
 		actions.UsePromptRefinement = boolPtr(val)
+	case "use_phase_planning":
+		actions.UsePhasePlanning = boolPtr(val)
 	default:
 		return fmt.Errorf("unsupported auto_approval_actions field '%s'", key)
 	}

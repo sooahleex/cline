@@ -21,6 +21,7 @@ import type { TaskState } from "../../TaskState"
 import type { AutoApprove } from "../../tools/autoApprove"
 import type { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
 import { TASK_CALLBACKS_KEYS, TASK_CONFIG_KEYS, TASK_SERVICES_KEYS } from "../utils/ToolConstants"
+import { Controller } from "../../../controller"
 
 /**
  * Strongly-typed configuration object passed to tool handlers
@@ -59,6 +60,9 @@ export interface TaskConfig {
 
 	// Tool coordination
 	coordinator: ToolExecutorCoordinator
+
+	// Planning
+	sidebarController: Controller
 }
 
 /**

@@ -42,6 +42,7 @@ message AutoApprovalActions {
   optional bool use_browser = 7;
   optional bool use_mcp = 8;
   optional bool use_prompt_refinement = 9;
+  optional bool use_phase_planning = 10;
 }
 
 // Auto approval settings for task execution
