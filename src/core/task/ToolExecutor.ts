@@ -13,6 +13,7 @@ import * as vscode from "vscode"
 import { modelDoesntSupportWebp } from "@/utils/model-utils"
 import { ToolUse } from "../assistant-message"
 import { ContextManager } from "../context/context-management/ContextManager"
+import { Controller } from "../controller"
 import { HookFactory } from "../hooks/hook-factory"
 import { formatResponse } from "../prompts/responses"
 import { StateManager } from "../storage/StateManager"
@@ -77,6 +78,7 @@ export class ToolExecutor {
 		private clineIgnoreController: ClineIgnoreController,
 		private contextManager: ContextManager,
 		private stateManager: StateManager,
+		private sidebarController: Controller,
 
 		// Configuration & Settings
 
@@ -170,6 +172,7 @@ export class ToolExecutor {
 				switchToActMode: this.switchToActMode,
 			},
 			coordinator: this.coordinator,
+			sidebarController: this.sidebarController,
 		}
 
 		// Validate the config at runtime to catch any missing properties

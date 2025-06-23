@@ -68,6 +68,13 @@ export const ACTION_METADATA: ActionMetadata[] = [
 		description: "Allows Cline to refine and improve your prompts for better task understanding and execution.",
 		icon: "codicon-sparkle",
 	},
+	{
+		id: "usePhasePlanning",
+		label: "Use planning",
+		shortName: "Planning",
+		description: "Allows Cline to create detailed plans and separate into phases for complex tasks before execution.",
+		icon: "codicon-list-ordered",
+	},
 ]
 
 export const NOTIFICATIONS_SETTING: ActionMetadata = {

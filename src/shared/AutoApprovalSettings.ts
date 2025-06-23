@@ -21,6 +21,7 @@ export interface AutoApprovalSettings {
 		useBrowser: boolean // Use browser
 		useMcp: boolean // Use MCP servers
 		usePromptRefinement: boolean // Use prompt refinement for better task understanding
+		usePhasePlanning: boolean // Use planning for task execution
 	}
 	// Global settings
 	enableNotifications: boolean // Show notifications for approval and task completion
@@ -41,6 +42,7 @@ export const DEFAULT_AUTO_APPROVAL_SETTINGS: AutoApprovalSettings = {
 		useBrowser: false,
 		useMcp: true,
 		usePromptRefinement: true,
+		usePhasePlanning: true,
 	},
 	enableNotifications: false,
 }
