@@ -926,36 +926,10 @@ export class Task {
 		let finalTask = task
 		// Apply prompt refinement if enabled and task is provided
 		const autoApprovalSettings = this.stateManager.getGlobalSettingsKey("autoApprovalSettings")
-		if (task && autoApprovalSettings.actions.usePromptRefinement) {
+		if (this.isPhaseRoot && task && autoApprovalSettings.actions.usePromptRefinement) {
 			try {
 				console.log("[Task] Applying prompt refinement...")
-				await this.say(
-					"api_req_started",
-					JSON.stringify({
-						request: "Refining prompt...",
-					}),
-				)
-
-				const updatePromptRefinementStatus = (message: string) => {
-					const lastApiReqStartedIndex = findLastIndex(this.clineMessages, (m) => m.say === "api_req_started")
-					if (lastApiReqStartedIndex !== -1) {
-						const currentApiReqInfo: ClineApiReqInfo = JSON.parse(
-							this.clineMessages[lastApiReqStartedIndex].text || "{}",
-						)
-						this.clineMessages[lastApiReqStartedIndex].text = JSON.stringify({
-							...currentApiReqInfo,
-							request: message,
-							cost: 0.001,
-						} satisfies ClineApiReqInfo)
-					}
-				}
-
-				let refinedResult = await refinePrompt(task, this.api)
-
-				updatePromptRefinementStatus("Prompt refinement completed")
-
-				// await this.saveClineMessagesAndUpdateHistory()
-				// await this.postStateToWebview()
+				let refinedResult = await refinePrompt(task, this.api, this)
 
 				if (refinedResult.needsMoreInfo) {
 					const questionList = refinedResult.followUpQuestions.map(
@@ -967,31 +941,29 @@ export class Task {
 							}) satisfies ClineAskQuestion,
 					)
 
-					// 2) Answer 저장
 					await this.askMoreQuestion(questionList)
-
-					// 3) Refine the prompt with the answers
 					for (const ques of questionList) {
 						task += `\n\nQ: ${ques.question}\nA: ${ques.selected}`
-						// await this.say("text", `QnA : \n\n ${JSON.stringify(ques)}`)
 					}
 
-					await this.say(
-						"api_req_started",
-						JSON.stringify({
-							request: "Refining prompt...",
-						}),
-					)
-
-					refinedResult = await refinePrompt(task, this.api)
-					// Update again after second refinement
-					updatePromptRefinementStatus("Prompt refinement completed")
+					refinedResult = await refinePrompt(task, this.api, this)
 				}
 				finalTask = refinedResult.refinedPrompt
 				await this.say("text", `Refined prompt: \n${finalTask}`)
 			} catch (error) {
 				console.error("[Task] Prompt refinement failed:", error)
-				// Continue with original prompt if refinement fails
+			}
+		}
+
+		if (
+			this.isPhaseRoot &&
+			autoApprovalSettings.actions.usePromptRefinement &&
+			autoApprovalSettings.actions.usePhasePlanning
+		) {
+			const approved = await this.askUserApproval("ask_question", "Proceed to Planning Phase with the refined prompt?")
+			if (!approved) {
+				await this.say("text", "Proceed to Planning Phase aborted by user.")
+				return
 			}
 		}
 
@@ -1194,7 +1166,7 @@ export class Task {
 	}
 
 	async askUserApproval(type: ClineAsk, partialMessage?: string): Promise<boolean> {
-		const { response, text, images, files } = await this.ask(type, partialMessage)
+		const { response } = await this.ask(type, partialMessage)
 		if (response !== "yesButtonClicked") {
 			return false
 		} else {
