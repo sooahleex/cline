@@ -1,7 +1,8 @@
 // src/core/assistant-message/phase-tracker.ts
+
+import * as vscode from "vscode"
 import { Controller } from "../controller"
 import { buildPhasePrompt } from "./build_prompt"
-import * as vscode from "vscode"
 
 export enum PhaseStatus {
 	Pending = "pending",
@@ -153,7 +154,7 @@ function parseChecklist(tag: string, block: string): Subtask[] {
 }
 
 function extractRequirement(source: string): string[] {
-	const re = new RegExp(`<related_input_requirements>\\s*([\\s\\S]*?)\\s*</related_input_requirements>`, "i")
+	const re = /<related_input_requirements>\s*([\s\S]*?)\s*<\/related_input_requirements>/i
 	const match = source.match(re)
 	const requirements = match ? match[1].trim() : ""
 
@@ -388,7 +389,6 @@ export async function parsePlanFromFixedFile(extensionContext: vscode.ExtensionC
 export class PhaseTracker {
 	public phaseStates: PhaseState[] = []
 	public currentPhaseIndex = 0
-	private phaseChangeListeners: ((phaseId: number, newStatus: PhaseStatus) => void)[] = []
 
 	constructor(
 		public projOverview: string,
@@ -457,7 +457,6 @@ export class PhaseTracker {
 		phaseState.status = PhaseStatus.Completed
 		phaseState.endTime = Date.now()
 
-		this.notifyPhaseChange(phaseId, PhaseStatus.Completed)
 		this.saveCheckpoint()
 	}
 
@@ -471,8 +470,6 @@ export class PhaseTracker {
 		next.status = PhaseStatus.InProgress
 		next.startTime = Date.now()
 
-		this.notifyPhaseChange(next.index, PhaseStatus.InProgress)
-		await this.controller.clearTask()
 		if (openNewTask) {
 			const nextPhase = this.phaseStates[this.currentPhaseIndex].phase
 			let nextPhasePrompt = ""
@@ -505,14 +502,6 @@ export class PhaseTracker {
 
 	public isAllComplete(): boolean {
 		return this.phaseStates.every((p) => p.status === PhaseStatus.Completed || p.status === PhaseStatus.Skipped)
-	}
-
-	private notifyPhaseChange(id: number, status: PhaseStatus): void {
-		this.phaseChangeListeners.forEach((l) => {
-			try {
-				l(id, status)
-			} catch {}
-		})
 	}
 
 	public getProjectOverview(): string {
