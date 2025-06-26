@@ -49,12 +49,7 @@ import { ApiConfiguration } from "@shared/api"
 import { findLast, findLastIndex } from "@shared/array"
 import { combineApiRequests } from "@shared/combineApiRequests"
 import { combineCommandSequences } from "@shared/combineCommandSequences"
-import {
-	ClineApiReqCancelReason,
-	ClineApiReqInfo,
-	ClineAsk, ClineMessage,
-	ClineSay
-} from "@shared/ExtensionMessage"
+import { ClineApiReqCancelReason, ClineApiReqInfo, ClineAsk, ClineMessage, ClineSay } from "@shared/ExtensionMessage"
 import { HistoryItem } from "@shared/HistoryItem"
 import { DEFAULT_LANGUAGE_SETTINGS, getLanguageKey, LanguageDisplay } from "@shared/Languages"
 import { convertClineMessageToProto } from "@shared/proto-conversions/cline-message"
@@ -881,6 +876,8 @@ export class Task {
 			const total = this.taskState.phaseTracker.totalPhases
 			const phaseIndex = this.taskState.phaseTracker.currentPhaseIndex
 			const prompt = buildPhasePrompt(phase, total, this.taskState.phaseTracker.getProjectOverview())
+
+			this.taskState.phaseTracker.updateTaskIdPhase(phaseIndex, this.taskId)
 
 			if (!this.taskState.newPhaseOpened) {
 				await this.controller.spawnPhaseTask(prompt, phaseIndex)
