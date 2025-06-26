@@ -42,6 +42,7 @@ export interface Subtask {
 
 export interface PhaseState {
 	index: number
+	taskId?: string
 	projOverview?: string
 	executionPlan?: string
 	requirements?: RequirementInventory
@@ -418,6 +419,7 @@ export class PhaseTracker {
 		parsedPhases.forEach((p) => {
 			this.phaseStates.push({
 				index: p.phaseIdx,
+				taskId: "",
 				phase: p,
 				status: PhaseStatus.Pending,
 				startTime: Date.now(),
@@ -430,6 +432,15 @@ export class PhaseTracker {
 	public markCurrentPhaseComplete(): void {
 		const ps = this.phaseStates[this.currentPhaseIndex]
 		this.completePhase(ps.index)
+	}
+
+	public updateTaskIdPhase(phaseId: number, taskId: string): void {
+		const phaseState = this.phaseStates.find((p) => p.index === phaseId)
+		if (!phaseState) {
+			return
+		}
+		phaseState.taskId = taskId
+		this.saveCheckpoint()
 	}
 
 	public completePhase(phaseId: number): void {
@@ -494,6 +505,23 @@ export class PhaseTracker {
 			throw new Error(`Phase ${index} is not properly initialized: missing phase data`)
 		}
 		return p.phase
+	}
+
+	public getPhaseByTaskId(taskId: string): number {
+		const phaseState = this.phaseStates.find((p) => p.taskId && p.taskId === taskId)
+		if (!phaseState) {
+			return -1
+		}
+		return phaseState.index
+	}
+
+	public resetPhaseStatus(startIdx: number) {
+		// reset
+		this.phaseStates.slice(startIdx).forEach((item) => {
+			item.taskId = ""
+			item.status = PhaseStatus.Pending
+		})
+		this.saveCheckpoint()
 	}
 
 	public get totalPhases(): number {
