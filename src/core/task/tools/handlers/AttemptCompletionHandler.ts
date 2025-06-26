@@ -123,7 +123,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 		if (config.messageState.getClineMessages().at(-1)?.ask === "command_output") {
 			await config.callbacks.say("command_output", "")
 		}
-		let text: string[] | undefined
+		let text: string | undefined
 		let images: string[] | undefined
 		let completionFiles: string[] | undefined
 		config.sidebarController.onPhaseCompleted(/* openNewTask */ true)
