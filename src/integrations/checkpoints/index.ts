@@ -254,6 +254,15 @@ export class TaskCheckpointManager implements ICheckpointManager {
 
 			let didWorkspaceRestoreFail = false
 
+			if (this.taskState.phaseTracker) {
+				const phaseIdx = this.taskState.phaseTracker.getPhaseByTaskId(this.task.taskId)
+				if (phaseIdx > 0) {
+					this.taskState.phaseTracker.resetPhaseStatus(phaseIdx)
+					this.taskState.phaseTracker.updateTaskIdPhase(phaseIdx, this.task.taskId)
+					this.taskState.phaseTracker.currentPhaseIndex = phaseIdx
+				}
+			}
+
 			switch (restoreType) {
 				case "task":
 					break

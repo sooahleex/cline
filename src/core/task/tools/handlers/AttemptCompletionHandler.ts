@@ -7,12 +7,12 @@ import { findLastIndex } from "@shared/array"
 import { COMPLETION_RESULT_CHANGES_FLAG } from "@shared/ExtensionMessage"
 import { telemetryService } from "@/services/telemetry"
 import { ClineDefaultTool } from "@/shared/tools"
+import { buildPhasePrompt } from "../../../planning/build_prompt"
 import type { ToolResponse } from "../../index"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { ToolResultUtils } from "../utils/ToolResultUtils"
-import { buildPhasePrompt } from "../../../planning/build_prompt"
 
 export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHandler {
 	readonly name = ClineDefaultTool.ATTEMPT
@@ -149,7 +149,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 			await config.callbacks.updateFCListFromToolResponse(block.params.task_progress)
 		}
 
-		let text: string[] | undefined
+		let text: string | undefined
 		let images: string[] | undefined
 		let completionFiles: string[] | undefined
 		config.sidebarController.onPhaseCompleted(/* openNewTask */ true)
