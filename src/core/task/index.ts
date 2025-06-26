@@ -1031,7 +1031,7 @@ export class Task {
 			this.autoApprovalSettings.actions.usePromptRefinement &&
 			this.autoApprovalSettings.actions.usePhasePlanning
 		) {
-			const approved = await this.askUserApproval("ask_question", "Proceed to Planning Phase with the refined prompt?")
+			const approved = await this.askUserApproval("ask_question", PROMPTS.PROCEED_TO_PLAN_MODE_ASK)
 			if (!approved) {
 				await this.say("text", "Proceed to Planning Phase aborted by user.")
 				return
@@ -1110,10 +1110,25 @@ export class Task {
 			await this.say(
 				"text",
 				`## Planning phase failed..\n\n If you want to proceed without a plan, please type 'continue' to skip the planning phase.`,
-			)
+			) // TODO: (sa)
+
+			// Mark planning phase as skipped and update state
+			// 	this.taskState.phaseTracker?.markCurrentPhaseComplete()
+			// 	this.taskState.isPhaseRoot = false
+			// 	this.taskState.newPhaseOpened = false
+
+			// 	// Provide clear recovery instructions
+			// 	await this.say(
+			// 		"text",
+			// 		`The system has automatically marked the planning phase as complete.
+			// You may now continue with the next phase or provide new instructions.`,
+			// 		undefined,
+			// 		undefined,
+			// 		false,
+			// 	)
 		}
 
-		const approved = await this.askUserApproval("ask_question", "Do you approve this Phase Plan and want to proceed?")
+		const approved = await this.askUserApproval("ask_question", PROMPTS.PROCEED_WITH_PLAN_ASK)
 		if (!approved) {
 			await this.say("text", "Plan execution aborted by user.")
 			return

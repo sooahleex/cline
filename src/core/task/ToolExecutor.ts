@@ -2335,25 +2335,39 @@ export class ToolExecutor {
 							} else {
 								const result = await this.sidebarController.task?.askUserApproval(
 									"ask_question",
-									"Want to move to next phase?",
+									MOVE_NEXT_PHASE_ASK,
 								)
 								if (result) {
-									const nextPhase =
-										this.taskState.phaseTracker?.phaseStates[this.taskState.phaseTracker?.currentPhaseIndex]
-											.phase
-									let nextPhasePrompt = ""
-									if (nextPhase && this.taskState.phaseTracker) {
-										nextPhasePrompt = buildPhasePrompt(
+									try {
+										const nextPhase =
+											this.taskState.phaseTracker?.phaseStates[
+												this.taskState.phaseTracker?.currentPhaseIndex
+											].phase
+										if (!nextPhase || !this.taskState.phaseTracker) {
+											throw new Error("Invalid phase state")
+										}
+
+										const nextPhasePrompt = buildPhasePrompt(
 											nextPhase,
 											this.taskState.phaseTracker.totalPhases,
 											this.taskState.phaseTracker.getProjectOverview(),
 										)
+
+										await this.sidebarController.spawnPhaseTask(
+											nextPhasePrompt,
+											this.taskState.phaseTracker?.currentPhaseIndex,
+										)
+										break
+									} catch (error) {
+										await this.say(
+											"text",
+											`Error moving to next phase: ${error}`,
+											undefined,
+											undefined,
+											false,
+										)
+										// Consider adding retry logic or status update
 									}
-									await this.sidebarController.spawnPhaseTask(
-										nextPhasePrompt,
-										this.taskState.phaseTracker?.currentPhaseIndex ?? 0,
-									)
-									break
 								}
 								await this.saveCheckpoint()
 							}
