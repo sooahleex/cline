@@ -57,6 +57,7 @@ import { setTimeout as setTimeoutPromise } from "node:timers/promises"
 import { ChangeLocation, StreamingJsonReplacer } from "../assistant-message/diff-json"
 import { Controller } from "../controller"
 import { buildPhasePrompt } from "../planning/build_prompt"
+import { PhaseStatus } from "../planning/phase-tracker"
 
 export class ToolExecutor {
 	constructor(
@@ -2312,7 +2313,6 @@ export class ToolExecutor {
 						}
 
 						// we already sent completion_result says, an empty string asks relinquishes control over button and field
-						let response: string | undefined
 						let text: string | undefined
 						let images: string[] | undefined
 						let completionFiles: string[] | undefined
@@ -2333,23 +2333,28 @@ export class ToolExecutor {
 								await this.say("user_feedback", text ?? "", images, completionFiles)
 								await this.saveCheckpoint()
 							} else {
-								const phase = this.taskState.phaseTracker?.currentPhase
-								const total = this.taskState.phaseTracker?.totalPhases
-								const nextPhasePrompt = phase
-									? buildPhasePrompt(phase, total ?? 1, this.taskState.phaseTracker?.getProjectOverview() || "")
-									: ""
-								const {
-									response,
-									text,
-									images,
-									files: newTaskFiles,
-								} = await this.ask("new_task", nextPhasePrompt, false)
-
-								if (response === "yesButtonClicked") {
-									this.pushToolResult("", block) // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
+								const result = await this.sidebarController.task?.askUserApproval(
+									"ask_question",
+									"Want to move to next phase?",
+								)
+								if (result) {
+									const nextPhase =
+										this.taskState.phaseTracker?.phaseStates[this.taskState.phaseTracker?.currentPhaseIndex]
+											.phase
+									let nextPhasePrompt = ""
+									if (nextPhase && this.taskState.phaseTracker) {
+										nextPhasePrompt = buildPhasePrompt(
+											nextPhase,
+											this.taskState.phaseTracker.totalPhases,
+											this.taskState.phaseTracker.getProjectOverview(),
+										)
+									}
+									await this.sidebarController.spawnPhaseTask(
+										nextPhasePrompt,
+										this.taskState.phaseTracker?.currentPhaseIndex ?? 0,
+									)
 									break
 								}
-								await this.say("user_feedback", text ?? "", images, newTaskFiles)
 								await this.saveCheckpoint()
 							}
 						} else {
