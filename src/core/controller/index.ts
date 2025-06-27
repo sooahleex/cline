@@ -46,7 +46,7 @@ import { sendMcpMarketplaceCatalogEvent } from "./mcp/subscribeToMcpMarketplaceC
 import { sendRelinquishControlEvent } from "./ui/subscribeToRelinquishControl"
 import { handleTaskServiceRequest } from "./task"
 import { BooleanRequest } from "@shared/proto/common"
-import { PhaseTracker } from "../planning/phase-tracker"
+import { PhaseTracker, PhaseStatus } from "../planning/phase-tracker"
 
 /*
 https://github.com/microsoft/vscode-webview-ui-toolkit-samples/blob/main/default/weather-webview/src/providers/WeatherViewProvider.ts
@@ -170,30 +170,38 @@ export class Controller {
 		}
 
 		// Initialize PhaseTracker based on priority
-		let newTracker: PhaseTracker | undefined
+		let newTracker: PhaseTracker
 
 		if (historyItem) {
-			// Restore from checkpoint
-			newTracker = await PhaseTracker.fromCheckpoint(this)
-			if (!newTracker) {
-				const errorMsg = "Failed to load task checkpoint. Unable to restore previous state."
-				this.outputChannel.appendLine(errorMsg)
-				vscode.window.showErrorMessage(errorMsg)
-				throw new Error(errorMsg)
+			newTracker = this.phaseTracker ?? new PhaseTracker("", "", {}, this)
+			if (this.phaseTracker?.isAllComplete() === true) {
+				newTracker = new PhaseTracker("", "", {}, this)
 			}
-		} else if (this.phaseTracker?.isAllComplete() === false) {
-			// Reuse existing tracker if not complete
-			newTracker = this.phaseTracker
+			// Restore from checkpoint
+			// newTracker = await PhaseTracker.fromCheckpoint(this)
+			// if (!newTracker) {
+			// 	const errorMsg = "Failed to load task checkpoint. Unable to restore previous state."
+			// 	this.outputChannel.appendLine(errorMsg)
+			// 	vscode.window.showErrorMessage(errorMsg)
+			// 	throw new Error(errorMsg)
+			// }
 		} else {
-			// Create new PhaseTracker
-			newTracker = new PhaseTracker("", "", {}, this)
+			const trackerFromCheckpoint = await PhaseTracker.fromCheckpoint(this)
+			newTracker = trackerFromCheckpoint || new PhaseTracker("", "", {}, this)
 		}
+		// } else if (this.phaseTracker?.isAllComplete() === false) {
+		// 	// Reuse existing tracker if not complete
+		// 	newTracker = this.phaseTracker
+		// } else {
+		// 	// Create new PhaseTracker
+		// 	newTracker = new PhaseTracker("", "", {}, this)
+		// }
 
 		this.phaseTracker = newTracker
 
 		// isPhaseRoot is only true when it's a "truly new task"
 		// It's false when restoring from checkpoint (historyItem) or reusing an existing tracker
-		const isPhaseRoot = !historyItem && !this.phaseTracker.projOverview
+		const isPhaseRoot = !historyItem && !this.phaseTracker?.projOverview
 
 		const NEW_USER_TASK_COUNT_THRESHOLD = 10
 
@@ -1154,7 +1162,7 @@ Commit message:`
 	}
 
 	public async onPhaseCompleted(openNewTask: boolean = false): Promise<void> {
-		const tracker = this.task?.getPhaseTracker?.() || this.task?.taskState.phaseTracker
+		const tracker = this.task?.getPhaseTracker?.() || this.phaseTracker
 		if (!tracker) {
 			return
 		}
@@ -1166,9 +1174,13 @@ Commit message:`
 		}
 
 		if (tracker.hasNextPhase()) {
-			await tracker
-				.moveToNextPhase(openNewTask)
-				.catch((err) => this.outputChannel.appendLine(`Error moving to next phase: ${err}`))
+			tracker.updatePhase()
+			if (this.task) {
+				this.phaseTracker = tracker // update task state with new tracker
+			}
+			// await tracker
+			// 	.moveToNextPhase(openNewTask)
+			// 	.catch((err) => this.outputChannel.appendLine(`Error moving to next phase: ${err}`))
 		}
 	}
 

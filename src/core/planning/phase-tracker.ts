@@ -419,7 +419,7 @@ export class PhaseTracker {
 				index: p.phaseIdx,
 				phase: p,
 				status: PhaseStatus.Pending,
-				startTime: Date.now(),
+				startTime: undefined,
 				endTime: undefined,
 			})
 		})
@@ -463,19 +463,21 @@ export class PhaseTracker {
 		return this.currentPhaseIndex < this.phaseStates.length - 1
 	}
 
-	public async moveToNextPhase(openNewTask: boolean = false): Promise<void> {
+	public updatePhase(): void {
 		this.currentPhaseIndex++
 		const next = this.phaseStates[this.currentPhaseIndex]
 		next.status = PhaseStatus.InProgress
 		next.startTime = Date.now()
+	}
 
+	public async moveToNextPhase(openNewTask: boolean = false): Promise<void> {
 		if (openNewTask) {
 			const nextPhase = this.phaseStates[this.currentPhaseIndex].phase
 			let nextPhasePrompt = ""
 			if (nextPhase) {
 				nextPhasePrompt = buildPhasePrompt(nextPhase, this.totalPhases, this.getProjectOverview())
 			}
-			await this.controller.spawnPhaseTask(nextPhasePrompt, next.index)
+			// await this.controller.spawnPhaseTask(nextPhasePrompt, this.currentPhaseIndex) // TODO: (sa) twice spawn??
 		}
 	}
 
@@ -507,7 +509,7 @@ export class PhaseTracker {
 		return this.projOverview
 	}
 
-	private async saveCheckpoint(): Promise<void> {
+	public async saveCheckpoint(): Promise<void> {
 		try {
 			// 1) Determine the base URI for saving
 			let baseUri: vscode.Uri

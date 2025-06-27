@@ -2318,7 +2318,7 @@ export class ToolExecutor {
 						let completionFiles: string[] | undefined
 						this.sidebarController.onPhaseCompleted(/* openNewTask */ true)
 						if (this.taskState.phaseFinished) {
-							if (this.taskState.phaseTracker?.isAllComplete()) {
+							if (this.sidebarController.task?.phaseTracker?.isAllComplete()) {
 								const {
 									response,
 									text,
@@ -2333,30 +2333,43 @@ export class ToolExecutor {
 								await this.say("user_feedback", text ?? "", images, completionFiles)
 								await this.saveCheckpoint()
 							} else {
-								const result = await this.sidebarController.task?.askUserApproval(
+								// Ensure task exists before calling askUserApproval
+								if (!this.sidebarController.task) {
+									await this.say(
+										"text",
+										"Error: No active task found for phase transition",
+										undefined,
+										undefined,
+										false,
+									)
+									await this.saveCheckpoint()
+									break
+								}
+								const result = await this.sidebarController.task.askUserApproval(
 									"ask_question",
 									PROMPTS.MOVE_NEXT_PHASE_ASK,
 								)
 								if (result) {
 									try {
-										const nextPhase =
-											this.taskState.phaseTracker?.phaseStates[
-												this.taskState.phaseTracker?.currentPhaseIndex
-											].phase
-										if (!nextPhase || !this.taskState.phaseTracker) {
-											throw new Error("Invalid phase state")
-										}
+										this.sidebarController.task.phaseTracker?.moveToNextPhase(/* openNewTask */ true)
+										// const nextPhase =
+										// 	this.taskState.phaseTracker?.phaseStates[
+										// 		this.taskState.phaseTracker?.currentPhaseIndex
+										// 	].phase
+										// if (!nextPhase || !this.taskState.phaseTracker) {
+										// 	throw new Error("Invalid phase state")
+										// }
 
-										const nextPhasePrompt = buildPhasePrompt(
-											nextPhase,
-											this.taskState.phaseTracker.totalPhases,
-											this.taskState.phaseTracker.getProjectOverview(),
-										)
+										// const nextPhasePrompt = buildPhasePrompt(
+										// 	nextPhase,
+										// 	this.taskState.phaseTracker.totalPhases,
+										// 	this.taskState.phaseTracker.getProjectOverview(),
+										// )
 
-										await this.sidebarController.spawnPhaseTask(
-											nextPhasePrompt,
-											this.taskState.phaseTracker?.currentPhaseIndex,
-										)
+										// await this.sidebarController.spawnPhaseTask(
+										// 	nextPhasePrompt,
+										// 	this.taskState.phaseTracker?.currentPhaseIndex,
+										// )
 										break
 									} catch (error) {
 										await this.say(

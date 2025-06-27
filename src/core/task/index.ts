@@ -148,7 +148,8 @@ export class Task {
 	private postMessageToWebview: (message: ExtensionMessage) => Promise<void>
 	private reinitExistingTaskFromId: (taskId: string) => Promise<void>
 	private cancelTask: () => Promise<void>
-	private sidebarController: Controller
+	private controller: Controller
+	public phaseTracker: PhaseTracker
 
 	// User chat state
 	autoApprovalSettings: AutoApprovalSettings
@@ -174,7 +175,7 @@ export class Task {
 		autoApprovalSettings: AutoApprovalSettings,
 		browserSettings: BrowserSettings,
 		chatSettings: ChatSettings,
-		sidebarController: Controller,
+		controller: Controller,
 		phaseTracker: PhaseTracker,
 		isPhaseRoot: boolean = false,
 		shellIntegrationTimeout: number,
@@ -196,7 +197,7 @@ export class Task {
 		this.postMessageToWebview = postMessageToWebview
 		this.reinitExistingTaskFromId = reinitExistingTaskFromId
 		this.cancelTask = cancelTask
-		this.sidebarController = sidebarController
+		this.controller = controller
 		this.clineIgnoreController = new ClineIgnoreController(cwd)
 		// Initialization moved to startTask/resumeTaskFromHistory
 		this.terminalManager = new TerminalManager()
@@ -214,7 +215,7 @@ export class Task {
 		this.chatSettings = chatSettings
 		this.enableCheckpoints = enableCheckpointsSetting
 
-		this.taskState.phaseTracker = phaseTracker
+		this.phaseTracker = phaseTracker
 		this.taskState.isPhaseRoot = isPhaseRoot
 
 		// Set up MCP notification callback for real-time notifications
@@ -310,8 +311,6 @@ export class Task {
 			telemetryService.captureTaskCreated(this.taskId, apiConfiguration.apiProvider)
 		}
 
-		this.taskState.phaseTracker = phaseTracker
-
 		this.toolExecutor = new ToolExecutor(
 			this.context,
 			this.taskState,
@@ -326,7 +325,7 @@ export class Task {
 			this.clineIgnoreController,
 			this.workspaceTracker,
 			this.contextManager,
-			this.sidebarController,
+			this.controller,
 			this.autoApprovalSettings,
 			this.browserSettings,
 			this.chatSettings,
@@ -1043,11 +1042,11 @@ export class Task {
 		let phaseAwarePrompt: string = ""
 		if (this.autoApprovalSettings.actions.usePhasePlanning) {
 			phaseAwarePrompt =
-				this.taskState.phaseTracker && !this.taskState.isPhaseRoot
+				this.phaseTracker && !this.taskState.isPhaseRoot
 					? buildPhasePrompt(
-							this.taskState.phaseTracker.currentPhase,
-							this.taskState.phaseTracker.totalPhases,
-							this.taskState.phaseTracker.getProjectOverview(),
+							this.phaseTracker.currentPhase,
+							this.phaseTracker.totalPhases,
+							this.phaseTracker.getProjectOverview(),
 						)
 					: (task ?? "")
 			if (this.taskState.isPhaseRoot) {
@@ -1072,8 +1071,8 @@ export class Task {
 		if (this.autoApprovalSettings.actions.usePhasePlanning) {
 			// Planning Phase
 			if (this.taskState.isPhaseRoot) {
-				await this.executePlanningPhase(userContent)
-				// await this.executePlanningPhase(phaseAwarePrompt)
+				// await this.executePlanningPhase(userContent)
+				await this.executePlanningPhase(phaseAwarePrompt)
 			}
 
 			// Execution Phase
@@ -1083,27 +1082,27 @@ export class Task {
 		}
 	}
 
-	private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
-		// private async executePlanningPhase(userBlocks: string): Promise<void> {
-		const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
-		if (!this.taskState.phaseTracker) {
+	// private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
+	private async executePlanningPhase(userBlocks: string): Promise<void> {
+		// const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
+		if (!this.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
 
 		// 고정된 plan.txt 파일에서 플랜 로드 (extension context 전달)
 		// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context)
 		try {
-			const {
-				projOverview,
-				executionPlan,
-				requirements,
-				phases: planSteps,
-			} = await parsePlanFromOutput(firstAssistantMessage)
-			// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromOutput(userBlocks)
-			this.taskState.phaseTracker!.projOverview = projOverview
-			this.taskState.phaseTracker!.executionPlan = executionPlan
-			this.taskState.phaseTracker!.requirements = requirements
-			this.taskState.phaseTracker.addPhasesFromPlan(planSteps)
+			// const {
+			// 	projOverview,
+			// 	executionPlan,
+			// 	requirements,
+			// 	phases: planSteps,
+			// } = await parsePlanFromOutput(firstAssistantMessage)
+			const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromOutput(userBlocks)
+			this.phaseTracker!.projOverview = projOverview
+			this.phaseTracker!.executionPlan = executionPlan
+			this.phaseTracker!.requirements = requirements
+			this.phaseTracker.addPhasesFromPlan(planSteps)
 
 			await this.say("text", `## 📝 Here is the proposed plan (Phase Plan):\n\n${executionPlan}`)
 		} catch (error) {
@@ -1139,25 +1138,23 @@ export class Task {
 		this.taskState.newPhaseOpened = false
 
 		// Mark the first phase as complete
-		this.taskState.phaseTracker.markCurrentPhaseComplete()
-		this.taskState.phaseTracker.currentPhaseIndex++
-		const next = this.taskState.phaseTracker.phaseStates[this.taskState.phaseTracker.currentPhaseIndex]
-		next.status = PhaseStatus.InProgress
-		next.startTime = Date.now()
+		this.phaseTracker.markCurrentPhaseComplete()
+		this.phaseTracker.updatePhase()
+		this.phaseTracker.saveCheckpoint()
 	}
 
 	private async executeCurrentPhase(): Promise<void> {
-		if (!this.taskState.phaseTracker) {
+		if (!this.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
-		while (!this.taskState.phaseTracker!.isAllComplete()) {
-			const phase = this.taskState.phaseTracker.currentPhase
-			const total = this.taskState.phaseTracker.totalPhases
-			const phaseIndex = this.taskState.phaseTracker.currentPhaseIndex
-			const prompt = buildPhasePrompt(phase, total, this.taskState.phaseTracker.getProjectOverview())
+		while (!this.phaseTracker.isAllComplete()) {
+			const phase = this.phaseTracker.currentPhase
+			const total = this.phaseTracker.totalPhases
+			const phaseIndex = this.phaseTracker.currentPhaseIndex
+			const prompt = buildPhasePrompt(phase, total, this.phaseTracker.getProjectOverview())
 
 			if (!this.taskState.newPhaseOpened) {
-				await this.sidebarController.spawnPhaseTask(prompt, phaseIndex)
+				await this.controller.spawnPhaseTask(prompt, phaseIndex)
 			} else {
 				this.taskState.isPhaseRoot = false
 				await this.runSinglePhase(prompt)
@@ -1165,11 +1162,11 @@ export class Task {
 			this.taskState.newPhaseOpened = false
 		}
 		await this.say("text", "All phases completed successfully!")
-		this.sidebarController.onTaskCompleted()
+		this.controller.onTaskCompleted()
 	}
 
 	public async runSinglePhase(currentPhasePrompt: string): Promise<void> {
-		if (!this.taskState.phaseTracker) {
+		if (!this.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
 
@@ -1178,7 +1175,7 @@ export class Task {
 		const phaseFinished = (await this.initiateTaskLoop(userBlocks)) || false
 		this.taskState.phaseFinished = phaseFinished
 		if (phaseFinished) {
-			this.sidebarController.onTaskCompleted()
+			this.controller.onTaskCompleted()
 		}
 	}
 
@@ -1475,7 +1472,7 @@ export class Task {
 				totalChunks++
 
 				// Update UI periodically to show progress without overwhelming it
-				const now = performance.now()
+				const now = Date.now()
 				if (now - lastUpdateTime > updateInterval) {
 					// Update progress message with latest thinking content
 					// Using the partial flag to indicate this is a progressive update
@@ -2281,7 +2278,7 @@ export class Task {
 	}
 
 	public getPhaseTracker(): PhaseTracker | undefined {
-		return this.taskState.phaseTracker
+		return this.phaseTracker
 	}
 
 	async recursivelyMakeClineRequests(userContent: UserContent, includeFileDetails: boolean = false): Promise<boolean> {
