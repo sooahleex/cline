@@ -85,7 +85,7 @@ import { ensureLocalClineDirExists } from "../context/instructions/user-instruct
 import { refreshWorkflowToggles } from "../context/instructions/user-instructions/workflows"
 import { Controller } from "../controller"
 import { buildPhasePrompt } from "../planning/build_prompt"
-import { PhaseStatus, PhaseTracker, parsePlanFromOutput } from "../planning/phase-tracker"
+import { PhaseTracker, parsePlanFromOutput } from "../planning/phase-tracker"
 import { PROMPTS } from "../planning/planning_prompt"
 import { StateManager } from "../storage/StateManager"
 import { FocusChainManager } from "./focus-chain"
@@ -284,7 +284,6 @@ export class Task {
 		this.stateManager = stateManager
 		this.workspaceManager = workspaceManager
 
-		this.taskState.phaseTracker = phaseTracker
 		this.taskState.isPhaseRoot = isPhaseRoot
 
 		// Set up MCP notification callback for real-time notifications
@@ -467,8 +466,6 @@ export class Task {
 			// New task started
 			telemetryService.captureTaskCreated(this.ulid, currentProvider)
 		}
-
-		this.taskState.phaseTracker = phaseTracker
 
 		this.toolExecutor = new ToolExecutor(
 			this.controller.context,
@@ -833,11 +830,11 @@ export class Task {
 		let phaseAwarePrompt: string = ""
 		if (autoApprovalSettings.actions.usePhasePlanning) {
 			phaseAwarePrompt =
-				this.taskState.phaseTracker && !this.taskState.isPhaseRoot
+				this.controller.phaseTracker && !this.taskState.isPhaseRoot
 					? buildPhasePrompt(
-							this.taskState.phaseTracker.currentPhase,
-							this.taskState.phaseTracker.totalPhases,
-							this.taskState.phaseTracker.getProjectOverview(),
+							this.controller.phaseTracker.currentPhase,
+							this.controller.phaseTracker.totalPhases,
+							this.controller.phaseTracker.getProjectOverview(),
 						)
 					: (task ?? "")
 			if (this.taskState.isPhaseRoot) {
@@ -862,6 +859,7 @@ export class Task {
 		if (autoApprovalSettings.actions.usePhasePlanning) {
 			// Planning Phase
 			if (this.taskState.isPhaseRoot) {
+				// TODO: PLANNING
 				await this.executePlanningPhase(userContent)
 				// await this.executePlanningPhase(phaseAwarePrompt)
 			}
@@ -873,16 +871,18 @@ export class Task {
 		}
 	}
 
+	// TODO: PLANNING
 	private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
 		// private async executePlanningPhase(userBlocks: string): Promise<void> {
 		const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
-		if (!this.taskState.phaseTracker) {
+		if (!this.controller.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
 
 		// 고정된 plan.txt 파일에서 플랜 로드 (extension context 전달)
 		// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context)
 		try {
+			// TODO: PLANNING
 			const {
 				projOverview,
 				executionPlan,
@@ -890,10 +890,10 @@ export class Task {
 				phases: planSteps,
 			} = await parsePlanFromOutput(firstAssistantMessage)
 			// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromOutput(userBlocks)
-			this.taskState.phaseTracker!.projOverview = projOverview
-			this.taskState.phaseTracker!.executionPlan = executionPlan
-			this.taskState.phaseTracker!.requirements = requirements
-			this.taskState.phaseTracker.addPhasesFromPlan(planSteps)
+			this.controller.phaseTracker!.projOverview = projOverview
+			this.controller.phaseTracker!.executionPlan = executionPlan
+			this.controller.phaseTracker!.requirements = requirements
+			this.controller.phaseTracker.addPhasesFromPlan(planSteps)
 
 			await this.say("text", `## 📝 Here is the proposed plan (Phase Plan):\n\n${executionPlan}`)
 		} catch (error) {
@@ -929,24 +929,22 @@ export class Task {
 		this.taskState.newPhaseOpened = false
 
 		// Mark the first phase as complete
-		this.taskState.phaseTracker.markCurrentPhaseComplete()
-		this.taskState.phaseTracker.currentPhaseIndex++
-		const next = this.taskState.phaseTracker.phaseStates[this.taskState.phaseTracker.currentPhaseIndex]
-		next.status = PhaseStatus.InProgress
-		next.startTime = Date.now()
+		await this.controller.phaseTracker.markCurrentPhaseComplete()
+		this.controller.phaseTracker.updatePhase()
+		await this.controller.phaseTracker.saveCheckpoint()
 	}
 
 	private async executeCurrentPhase(): Promise<void> {
-		if (!this.taskState.phaseTracker) {
+		if (!this.controller.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
-		while (!this.taskState.phaseTracker!.isAllComplete()) {
-			const phase = this.taskState.phaseTracker.currentPhase
-			const total = this.taskState.phaseTracker.totalPhases
-			const phaseIndex = this.taskState.phaseTracker.currentPhaseIndex
-			const prompt = buildPhasePrompt(phase, total, this.taskState.phaseTracker.getProjectOverview())
+		while (!this.controller.phaseTracker!.isAllComplete()) {
+			const phase = this.controller.phaseTracker.currentPhase
+			const total = this.controller.phaseTracker.totalPhases
+			const phaseIndex = this.controller.phaseTracker.currentPhaseIndex
+			const prompt = buildPhasePrompt(phase, total, this.controller.phaseTracker.getProjectOverview())
 
-			this.taskState.phaseTracker.updateTaskIdPhase(phaseIndex, this.taskId)
+			this.controller.phaseTracker.updateTaskIdPhase(phaseIndex, this.taskId)
 
 			if (!this.taskState.newPhaseOpened) {
 				await this.controller.spawnPhaseTask(prompt, phaseIndex)
@@ -956,12 +954,11 @@ export class Task {
 			}
 			this.taskState.newPhaseOpened = false
 		}
-		await this.say("text", "All phases completed successfully!")
 		this.controller.onTaskCompleted()
 	}
 
 	public async runSinglePhase(currentPhasePrompt: string): Promise<void> {
-		if (!this.taskState.phaseTracker) {
+		if (!this.controller.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
 
@@ -969,9 +966,6 @@ export class Task {
 
 		const phaseFinished = (await this.initiateTaskLoop(userBlocks)) || false
 		this.taskState.phaseFinished = phaseFinished
-		if (phaseFinished) {
-			this.controller.onTaskCompleted()
-		}
 	}
 
 	async askUserApproval(type: ClineAsk, partialMessage?: string): Promise<boolean> {
@@ -2157,7 +2151,7 @@ export class Task {
 	}
 
 	public getPhaseTracker(): PhaseTracker | undefined {
-		return this.taskState.phaseTracker
+		return this.controller.phaseTracker
 	}
 
 	async recursivelyMakeClineRequests(userContent: UserContent, includeFileDetails: boolean = false): Promise<boolean> {
