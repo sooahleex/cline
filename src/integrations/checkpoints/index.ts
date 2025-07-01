@@ -15,6 +15,7 @@ import { ClineCheckpointRestore } from "@shared/WebviewMessage"
 import pTimeout from "p-timeout"
 import { HostProvider } from "@/hosts/host-provider"
 import { ShowMessageType } from "@/shared/proto/host/window"
+import { Controller } from "../../core/controller"
 import { MessageStateHandler } from "../../core/task/message-state"
 import { TaskState } from "../../core/task/TaskState"
 import { ICheckpointManager } from "./types"
@@ -41,6 +42,7 @@ interface CheckpointManagerServices {
 	readonly messageStateHandler: MessageStateHandler
 	readonly taskState: TaskState
 	readonly workspaceManager?: WorkspaceRootManager
+	readonly controller: Controller
 }
 interface CheckpointManagerCallbacks {
 	readonly updateTaskHistory: UpdateTaskHistoryFunction
@@ -254,12 +256,12 @@ export class TaskCheckpointManager implements ICheckpointManager {
 
 			let didWorkspaceRestoreFail = false
 
-			if (this.taskState.phaseTracker) {
-				const phaseIdx = this.taskState.phaseTracker.getPhaseByTaskId(this.task.taskId)
+			if (this.services.controller.phaseTracker) {
+				const phaseIdx = this.services.controller.phaseTracker.getPhaseByTaskId(this.task.taskId)
 				if (phaseIdx > 0) {
-					this.taskState.phaseTracker.resetPhaseStatus(phaseIdx)
-					this.taskState.phaseTracker.updateTaskIdPhase(phaseIdx, this.task.taskId)
-					this.taskState.phaseTracker.currentPhaseIndex = phaseIdx
+					this.services.controller.phaseTracker.resetPhaseStatus(phaseIdx)
+					this.services.controller.phaseTracker.updateTaskIdPhase(phaseIdx, this.task.taskId)
+					this.services.controller.phaseTracker.currentPhaseIndex = phaseIdx
 				}
 			}
 
