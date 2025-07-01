@@ -166,29 +166,26 @@ export class Controller {
 		}
 
 		// Initialize PhaseTracker based on priority
-		let newTracker: PhaseTracker | undefined
+		let newTracker: PhaseTracker
 		try {
 			// Restore from checkpoint
-			newTracker = await PhaseTracker.fromCheckpoint(this)
+			const restoredTracker = await PhaseTracker.fromCheckpoint(this)
+			newTracker = restoredTracker || new PhaseTracker("", "", {}, this)
 		} catch (error) {
 			// Create new PhaseTracker
 			newTracker = new PhaseTracker("", "", {}, this)
 		}
 
-		if (newTracker?.isAllComplete() === true) {
+		if (newTracker?.isAllComplete()) {
 			// Create new PhaseTracker
 			newTracker = new PhaseTracker("", "", {}, this)
 		}
 
-		// Ensure newTracker is defined to fix type error
-		if (newTracker === undefined) {
-			newTracker = new PhaseTracker("", "", {}, this)
-		}
 		this.phaseTracker = newTracker
 
 		// isPhaseRoot is only true when it's a "truly new task"
 		// It's false when restoring from checkpoint (historyItem) or reusing an existing tracker
-		const isPhaseRoot = !historyItem && !this.phaseTracker?.projOverview
+		const isPhaseRoot = !historyItem && !this.phaseTracker?.isRestored
 
 		const NEW_USER_TASK_COUNT_THRESHOLD = 10
 
@@ -1159,7 +1156,8 @@ Commit message:`
 		}
 
 		if (tracker.hasNextPhase()) {
-			await tracker.updateSavePhase()
+			tracker.updatePhase()
+			await tracker.saveCheckpoint()
 		}
 	}
 

@@ -389,6 +389,7 @@ export async function parsePlanFromFixedFile(extensionContext: vscode.ExtensionC
 export class PhaseTracker {
 	public phaseStates: PhaseState[] = []
 	public currentPhaseIndex = 0
+	public isRestored: boolean = false
 
 	constructor(
 		public projOverview: string,
@@ -475,15 +476,15 @@ export class PhaseTracker {
 	}
 
 	public updatePhase(): void {
+		// Add bounds checking
+		if (this.currentPhaseIndex >= this.phaseStates.length - 1) {
+			throw new Error("Cannot advance beyond last phase")
+		}
+
 		this.currentPhaseIndex++
 		const next = this.phaseStates[this.currentPhaseIndex]
 		next.status = PhaseStatus.InProgress
 		next.startTime = Date.now()
-	}
-
-	public async updateSavePhase(): Promise<void> {
-		this.updatePhase()
-		await this.saveCheckpoint()
 	}
 
 	public get currentPhase(): Phase {
@@ -599,7 +600,7 @@ export class PhaseTracker {
 			)
 			tracker.phaseStates = checkpoint.phaseStates
 			tracker.currentPhaseIndex = checkpoint.currentPhaseIndex
-
+			tracker.isRestored = true // Mark as restored
 			// Restored phase checkpoint
 			return tracker
 		} catch (err) {

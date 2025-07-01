@@ -1052,8 +1052,9 @@ export class Task {
 		if (this.autoApprovalSettings.actions.usePhasePlanning) {
 			// Planning Phase
 			if (this.taskState.isPhaseRoot) {
-				// await this.executePlanningPhase(userContent)
-				await this.executePlanningPhase(phaseAwarePrompt)
+				// TODO: PLANNING
+				await this.executePlanningPhase(userContent)
+				// await this.executePlanningPhase(phaseAwarePrompt)
 			}
 
 			// Execution Phase
@@ -1063,9 +1064,10 @@ export class Task {
 		}
 	}
 
-	// private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
-	private async executePlanningPhase(userBlocks: string): Promise<void> {
-		// const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
+	// TODO: PLANNING
+	private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
+		// private async executePlanningPhase(userBlocks: string): Promise<void> {
+		const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
 		if (!this.sidebarController.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
@@ -1073,13 +1075,14 @@ export class Task {
 		// 고정된 plan.txt 파일에서 플랜 로드 (extension context 전달)
 		// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context)
 		try {
-			// const {
-			// 	projOverview,
-			// 	executionPlan,
-			// 	requirements,
-			// 	phases: planSteps,
-			// } = await parsePlanFromOutput(firstAssistantMessage)
-			const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromOutput(userBlocks)
+			// TODO: PLANNING
+			const {
+				projOverview,
+				executionPlan,
+				requirements,
+				phases: planSteps,
+			} = await parsePlanFromOutput(firstAssistantMessage)
+			// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromOutput(userBlocks)
 			this.sidebarController.phaseTracker!.projOverview = projOverview
 			this.sidebarController.phaseTracker!.executionPlan = executionPlan
 			this.sidebarController.phaseTracker!.requirements = requirements
@@ -1120,7 +1123,8 @@ export class Task {
 
 		// Mark the first phase as complete
 		await this.sidebarController.phaseTracker.markCurrentPhaseComplete()
-		await this.sidebarController.phaseTracker.updateSavePhase()
+		this.sidebarController.phaseTracker.updatePhase()
+		await this.sidebarController.phaseTracker.saveCheckpoint()
 	}
 
 	private async executeCurrentPhase(): Promise<void> {
