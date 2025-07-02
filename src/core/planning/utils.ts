@@ -65,19 +65,19 @@ export function extractTagAsLines(tag: string, source: string, removeListMarkers
 export async function saveParsedPlanAsMarkdown(
 	parsedPlan: ParsedPlan,
 	saveUri: vscode.Uri,
+	taskId: string,
 ): Promise<{ fileUri: vscode.Uri | undefined; snapshotUri: vscode.Uri | undefined }> {
 	try {
 		const mdContent = generateMarkdownContent(parsedPlan)
 
-		const timestamp = new Date().toISOString().replace(/[:.]/g, "-").split("T")[0]
-		const filename = `project-execution-plan-${timestamp}.md` //TODO: (sa) use phaseID instead of timestamp?
+		const filename = `project-execution-plan-${taskId}.md`
 		const fileUri = vscode.Uri.joinPath(saveUri, filename)
 
 		const encoder = new TextEncoder()
 		await vscode.workspace.fs.writeFile(fileUri, encoder.encode(mdContent))
 		console.log(`[saveParsedPlanAsMarkdown] Plan saved to workspace root: ${fileUri.toString()}`)
 
-		const snapshotUri = await createSnapshot(fileUri, saveUri)
+		const snapshotUri = await createSnapshot(fileUri, saveUri, taskId)
 		return { fileUri, snapshotUri } // Return the URI of the saved markdown file
 	} catch (error) {
 		console.error("[saveParsedPlanAsMarkdown] Failed to save plan:", error)
@@ -93,8 +93,10 @@ export async function saveParsedPlanAsMarkdown(
  * Otherwise, it creates a new snapshot using a simple file-locking mechanism
  * to prevent race conditions when multiple processes attempt to create a snapshot simultaneously.
  */
-export async function createSnapshot(planUri: vscode.Uri, baseUri: vscode.Uri): Promise<vscode.Uri> {
-	const snapshotUri = vscode.Uri.joinPath(baseUri, "project-execution-plan-snapshot.md")
+export async function createSnapshot(planUri: vscode.Uri, baseUri: vscode.Uri, taskId: string): Promise<vscode.Uri> {
+	const filename = `project-execution-plan-${taskId}-snapshot.md`
+	const snapshotUri = vscode.Uri.joinPath(baseUri, filename)
+
 	try {
 		await vscode.workspace.fs.stat(snapshotUri)
 		return snapshotUri // If it exists, return the existing snapshot URI

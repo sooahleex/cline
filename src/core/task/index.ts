@@ -1048,8 +1048,8 @@ export class Task {
 			// Planning Phase
 			if (this.taskState.isPhaseRoot) {
 				// TODO: PLANNING
-				await this.executePlanningPhase(userContent)
-				// await this.executePlanningPhase(phaseAwarePrompt)
+				// await this.executePlanningPhase(userContent)
+				await this.executePlanningPhase(phaseAwarePrompt)
 			}
 			// Execution Phase
 			await this.executeCurrentPhase()
@@ -1059,9 +1059,9 @@ export class Task {
 	}
 
 	// TODO: PLANNING
-	private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
-		// private async executePlanningPhase(userBlocks: string): Promise<void> {
-		const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
+	// private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
+	private async executePlanningPhase(userBlocks: string): Promise<void> {
+		// const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
 		if (!this.sidebarController.phaseTracker) {
 			throw new Error("PhaseTracker not initialized")
 		}
@@ -1071,10 +1071,10 @@ export class Task {
 		try {
 			const saveUri = this.sidebarController.phaseTracker.getBaseUri(this.sidebarController)
 			// TODO: PLANNING
-			const { projOverview, executionPlan, requirements, phases: planSteps } = parsePlanFromOutput(firstAssistantMessage)
-			// const { projOverview, executionPlan, requirements, phases: planSteps } = parsePlanFromOutput(userBlocks)
+			// const { projOverview, executionPlan, requirements, phases: planSteps } = parsePlanFromOutput(firstAssistantMessage)
+			const { projOverview, executionPlan, requirements, phases: planSteps } = parsePlanFromOutput(userBlocks)
 			const parsedPlan = { projOverview, executionPlan, requirements, phases: planSteps }
-			const { fileUri, snapshotUri } = await saveParsedPlanAsMarkdown(parsedPlan, saveUri).catch((error) => {
+			const { fileUri, snapshotUri } = await saveParsedPlanAsMarkdown(parsedPlan, saveUri, this.taskId).catch((error) => {
 				console.warn("[parsePlanFromOutput] Failed to save plan markdown file:", error)
 				return { fileUri: undefined, snapshotUri: undefined }
 			})
@@ -1086,15 +1086,18 @@ export class Task {
 
 			const approved = await this.askUserApproval("ask_check", planCheckMessage)
 
+			let diffexisted = false
 			if (approved && fileUri && snapshotUri) {
-				await this.confirmPlanAndUpdate(fileUri, snapshotUri)
+				diffexisted = await this.confirmPlanAndUpdate(fileUri, snapshotUri)
 			} else {
 				await this.say("text", "⚠️ **Could not confirm plan: Unable to create plan files.**")
 			}
-			this.sidebarController.phaseTracker!.projOverview = projOverview
-			this.sidebarController.phaseTracker!.executionPlan = executionPlan
-			this.sidebarController.phaseTracker!.requirements = requirements
-			this.sidebarController.phaseTracker.addPhasesFromPlan(planSteps)
+			if (!diffexisted) {
+				this.sidebarController.phaseTracker!.projOverview = projOverview
+				this.sidebarController.phaseTracker!.executionPlan = executionPlan
+				this.sidebarController.phaseTracker!.requirements = requirements
+				this.sidebarController.phaseTracker.addPhasesFromPlan(planSteps)
+			}
 
 			await this.say("text", `## 📝 Here is the proposed plan (Phase Plan):\n\n${executionPlan}`)
 		} catch (error) {
@@ -1179,7 +1182,7 @@ export class Task {
 		}
 	}
 
-	async confirmPlanAndUpdate(planUri: vscode.Uri, snapshotUri: vscode.Uri): Promise<void> {
+	async confirmPlanAndUpdate(planUri: vscode.Uri, snapshotUri: vscode.Uri): Promise<boolean> {
 		const diff = await getPlanMarkdownDiff(planUri, snapshotUri)
 		if (!diff) {
 			await this.say("text", "✅ **No changes detected – plan already confirmed.**")
@@ -1227,6 +1230,11 @@ export class Task {
 		}
 
 		console.log("[confirmPlanAndUpdate] Successfully Plan confirmed, tracker updated, file locked, and snapshot removed.")
+		if (!diff) {
+			return false
+		} else {
+			return true
+		}
 	}
 
 	private async resumeTaskFromHistory() {
