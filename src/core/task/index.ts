@@ -2010,13 +2010,10 @@ export class Task {
 			// saves task history item which we use to keep track of conversation history deleted range
 		}
 		// Use forced model if specified, otherwise use default api
-		let stream
-		if (this.taskState.isPhaseRoot) {
-			// const apiToUse = forceModel ? this.createTemporaryApiHandler(forceModel) : this.api
-			stream = apiToUse.createMessage(PROMPTS.PLANNING, contextManagementMetadata.truncatedConversationHistory)
-		} else {
-			stream = this.api.createMessage(systemPrompt, contextManagementMetadata.truncatedConversationHistory)
-		}
+		const stream = apiToUse.createMessage(
+			this.taskState.isPhaseRoot ? PROMPTS.PLANNING : systemPrompt,
+			contextManagementMetadata.truncatedConversationHistory,
+		)
 
 		const iterator = stream[Symbol.asyncIterator]()
 
