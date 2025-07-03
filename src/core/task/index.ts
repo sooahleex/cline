@@ -884,11 +884,8 @@ export class Task {
 							this.controller.phaseTracker.getProjectOverview(),
 						)
 					: (task ?? "")
-			if (this.taskState.isPhaseRoot) {
-				userContent = [{ type: "text", text: `${PROMPTS.PLANNING}\n\n<task>\n${task}\n</task>` }, ...imageBlocks]
-			} else {
-				userContent = [{ type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
-			}
+
+			userContent = [{ type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
 		} else {
 			userContent = [{ type: "text", text: `<task>\n${task}\n</task>` }, ...imageBlocks]
 		}
@@ -2197,13 +2194,11 @@ export class Task {
 			// saves task history item which we use to keep track of conversation history deleted range
 		}
 		// Use forced model if specified, otherwise use default api
-		let stream
-		if (this.taskState.isPhaseRoot) {
-			const apiToUse = forceModel ? this.createTemporaryApiHandler(forceModel) : this.api
-			stream = apiToUse.createMessage(systemPrompt, contextManagementMetadata.truncatedConversationHistory)
-		} else {
-			stream = this.api.createMessage(systemPrompt, contextManagementMetadata.truncatedConversationHistory)
-		}
+		const apiToUse = this.taskState.isPhaseRoot && forceModel ? this.createTemporaryApiHandler(forceModel) : this.api
+		const stream = apiToUse.createMessage(
+			this.taskState.isPhaseRoot ? PROMPTS.PLANNING : systemPrompt,
+			contextManagementMetadata.truncatedConversationHistory,
+		)
 
 		const iterator = stream[Symbol.asyncIterator]()
 
