@@ -1025,11 +1025,8 @@ export class Task {
 							this.sidebarController.phaseTracker.getProjectOverview(),
 						)
 					: (task ?? "")
-			if (this.taskState.isPhaseRoot) {
-				userContent = [{ type: "text", text: `${PROMPTS.PLANNING}\n\n<task>\n${task}\n</task>` }, ...imageBlocks]
-			} else {
-				userContent = [{ type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
-			}
+
+			userContent = [{ type: "text", text: `<task>\n${phaseAwarePrompt}\n</task>` }, ...imageBlocks]
 		} else {
 			userContent = [{ type: "text", text: `<task>\n${task}\n</task>` }, ...imageBlocks]
 		}
@@ -1947,7 +1944,8 @@ export class Task {
 
 		const supportsBrowserUse = modelSupportsBrowserUse && !disableBrowserTool // only enable browser use if the model supports it and the user hasn't disabled it
 
-		const isNextGenModel = isClaude4ModelFamily(this.api) || isGemini2dot5ModelFamily(this.api)
+		const apiToUse = this.taskState.isPhaseRoot && forceModel ? this.createTemporaryApiHandler(forceModel) : this.api
+		const isNextGenModel = isClaude4ModelFamily(apiToUse) || isGemini2dot5ModelFamily(apiToUse)
 		let systemPrompt = await SYSTEM_PROMPT(cwd, supportsBrowserUse, this.mcpHub, this.browserSettings, isNextGenModel)
 
 		await this.migratePreferredLanguageToolSetting()
@@ -2014,8 +2012,8 @@ export class Task {
 		// Use forced model if specified, otherwise use default api
 		let stream
 		if (this.taskState.isPhaseRoot) {
-			const apiToUse = forceModel ? this.createTemporaryApiHandler(forceModel) : this.api
-			stream = apiToUse.createMessage(systemPrompt, contextManagementMetadata.truncatedConversationHistory)
+			// const apiToUse = forceModel ? this.createTemporaryApiHandler(forceModel) : this.api
+			stream = apiToUse.createMessage(PROMPTS.PLANNING, contextManagementMetadata.truncatedConversationHistory)
 		} else {
 			stream = this.api.createMessage(systemPrompt, contextManagementMetadata.truncatedConversationHistory)
 		}
