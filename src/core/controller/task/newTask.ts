@@ -83,7 +83,17 @@ export async function newTask(controller: Controller, request: NewTaskRequest): 
 		}).filter(([_, value]) => value !== undefined),
 	)
 
-	const taskId = await controller.spawnNewTask(request.text, request.images, request.files, undefined, filteredTaskSettings)
-	// const taskId = await controller.initTask(request.text, request.images, request.files, undefined, filteredTaskSettings)
+	let taskId: string | undefined
+	if (controller.phaseTracker === undefined) {
+		taskId = await controller.initTask(request.text, request.images, request.files, undefined, filteredTaskSettings)
+	} else {
+		const spawnedTaskId = await controller.spawnNewTask(request.text, request.images, request.files, undefined, filteredTaskSettings)
+		if (spawnedTaskId === false) {
+			// User cancelled the task creation, don't return Empty.create()
+			// This will prevent the gRPC response from being sent immediately
+			throw new Error("Task creation cancelled by user")
+		}
+		taskId = spawnedTaskId
+	}
 	return String.create({ value: taskId || "" })
 }
