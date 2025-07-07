@@ -9,7 +9,7 @@ import { NewTaskRequest } from "../../../shared/proto/task"
  * @returns Empty response
  */
 export async function newTask(controller: Controller, request: NewTaskRequest): Promise<Empty> {
-	if (!controller.phaseTracker || controller.phaseTracker.isAllComplete()) {
+	if (controller.phaseTracker === undefined || controller.phaseTracker.isAllComplete()) {
 		await controller.initTask(request.text, request.images, request.files)
 	} else {
 		const taskCreated = await controller.spawnNewTask(request.text, request.images, request.files)
