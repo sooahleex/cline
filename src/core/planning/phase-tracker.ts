@@ -628,7 +628,7 @@ export class PhaseTracker {
 		}
 
 		const ps = this.phaseStates[this.currentPhaseIndex]
-		ps.status = PhaseStatus.Completed
+		ps.status = PhaseStatus.Skipped
 		ps.endTime = Date.now()
 	}
 
