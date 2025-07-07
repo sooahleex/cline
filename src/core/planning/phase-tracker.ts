@@ -618,8 +618,16 @@ export class PhaseTracker {
 	}
 
 	public async markCurrentPhaseSkipped(): Promise<void> {
+		if (
+			this.currentPhaseIndex < 0 ||
+			this.currentPhaseIndex >= this.phaseStates.length ||
+			!this.phaseStates[this.currentPhaseIndex]
+		) {
+			console.warn("Invalid phase index or phase not found")
+			return
+		}
+
 		const ps = this.phaseStates[this.currentPhaseIndex]
-		// Update status
 		ps.status = PhaseStatus.Completed
 		ps.endTime = Date.now()
 	}
