@@ -617,6 +617,13 @@ export class PhaseTracker {
 		await this.completePhase(ps.index)
 	}
 
+	public async markCurrentPhaseSkipped(): Promise<void> {
+		const ps = this.phaseStates[this.currentPhaseIndex]
+		// Update status
+		ps.status = PhaseStatus.Completed
+		ps.endTime = Date.now()
+	}
+
 	public updateTaskIdPhase(phaseId: number, taskId: string): void {
 		const phaseState = this.phaseStates.find((p) => p.index === phaseId)
 		if (!phaseState) {

@@ -1063,14 +1063,13 @@ export class Task {
 	// TODO: PLANNING
 	private async executePlanningPhase(userBlocks: UserContent): Promise<boolean> {
 		// private async executePlanningPhase(userBlocks: string): Promise<void> {
-		const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
-		if (!this.sidebarController.phaseTracker) {
-			throw new Error("PhaseTracker not initialized")
-		}
-
-		// 고정된 plan.txt 파일에서 플랜 로드 (extension context 전달)
-		// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context, this.sidebarController.phaseTracker.getBaseUri())
 		try {
+			const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
+			if (!this.sidebarController.phaseTracker) {
+				throw new Error("PhaseTracker not initialized")
+			}
+			// 고정된 plan.txt 파일에서 플랜 로드 (extension context 전달)
+			// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context, this.sidebarController.phaseTracker.getBaseUri())
 			const saveUri = this.sidebarController.phaseTracker.getBaseUri(this.sidebarController)
 			// TODO: PLANNING
 			const { projOverview, executionPlan, requirements, phases: planSteps } = parsePlanFromOutput(firstAssistantMessage)
@@ -1093,6 +1092,7 @@ export class Task {
 				diffExisted = await this.confirmPlanAndUpdate(fileUri, snapshotUri)
 			} else {
 				await this.say("text", "⚠️ **계획을 확인할 수 없습니다: 계획 파일을 생성할 수 없습니다.**")
+				return false // Exit planning phase since plan file creation failed
 			}
 			if (!diffExisted) {
 				this.sidebarController.phaseTracker!.projOverview = projOverview
@@ -1105,7 +1105,7 @@ export class Task {
 
 			const approved = await this.askUserApproval("ask_proceed", PROMPTS.PROCEED_WITH_PLAN_ASK)
 			if (!approved) {
-				await this.say("text", "Plan execution aborted by user.")
+				await this.say("text", "🚫 **계획 실행이 취소되었습니다.**\n\n사용자가 제안된 계획의 실행을 중단했습니다.")
 				return false // Abort planning phase
 			}
 
@@ -1117,13 +1117,14 @@ export class Task {
 			await this.sidebarController.phaseTracker.markCurrentPhaseComplete()
 			this.sidebarController.phaseTracker.updatePhase()
 			await this.sidebarController.phaseTracker.saveCheckpoint()
+			return true
 		} catch (error) {
 			this.taskState.consecutivePlanningRetryCount += 1
 			const approveRetry = await this.askUserApproval("ask_retry", PROMPTS.RETRY_PLAN_ASK)
 			if (approveRetry && this.taskState.consecutivePlanningRetryCount < 3) {
 				await this.say("text", "🔄 **계획을 다시 시도합니다...**")
 				// Retry the planning phase
-				await this.executePlanningPhase(userBlocks)
+				return await this.executePlanningPhase(userBlocks)
 			} else if (approveRetry && this.taskState.consecutivePlanningRetryCount >= 3) {
 				await this.say(
 					"text",
@@ -1133,8 +1134,8 @@ export class Task {
 				this.taskState.consecutivePlanningRetryCount = 0 // Reset retry count after skipping
 
 				// Planning failed, proceed with normal task execution
-				// this.taskState.isPhaseRoot = false
-				// this.taskState.newPhaseOpened = false
+				this.taskState.isPhaseRoot = false // Disable root mode since we're skipping planning
+				this.sidebarController.phaseTracker!.markCurrentPhaseSkipped()
 				return false // Exit planning phase since we're now in normal execution
 			} else {
 				await this.say(
@@ -1144,12 +1145,11 @@ export class Task {
 				)
 
 				// Planning failed, proceed with normal task execution
-				// this.taskState.isPhaseRoot = false
-				// this.taskState.newPhaseOpened = false
+				this.taskState.isPhaseRoot = false // Disable root mode since we're skipping planning
+				this.sidebarController.phaseTracker!.markCurrentPhaseSkipped()
 				return false // Exit planning phase since we're now in normal execution
 			}
 		}
-		return true
 	}
 
 	private async executeCurrentPhase(): Promise<void> {
@@ -1199,11 +1199,15 @@ export class Task {
 	async confirmPlanAndUpdate(planUri: vscode.Uri, snapshotUri: vscode.Uri): Promise<boolean> {
 		const diff = await getPlanMarkdownDiff(planUri, snapshotUri)
 		if (!diff) {
-			await this.say("text", "✅ **No changes detected – plan already confirmed.**")
-			// Even if no changes, we still want to lock the plan and remove snapshot
+			await this.say(
+				"text",
+				"✅ **변경사항이 감지되지 않았습니다**\n\n계획 파일에 수정사항이 없으므로 현재 계획을 그대로 진행합니다.",
+			)
 		} else {
-			// Show diff to user (use dedicated panel/webview if needed)
-			await this.say("text", `### 🔍 Detected changes in *plan.md*\n\`\`\`diff\n${diff}\n\`\`\``)
+			await this.say(
+				"text",
+				`### 🔍 **계획 파일에서 변경사항이 감지되었습니다**\n\n*plan.md* 파일이 수정되었습니다. 변경된 내용을 확인해주세요:\n\n\`\`\`diff\n${diff}\n\`\`\``,
+			)
 
 			// Re-parse plan.md → update tracker
 			const mdBuf = await vscode.workspace.fs.readFile(planUri)
@@ -1228,10 +1232,16 @@ export class Task {
 			const path = planUri.fsPath
 			// Set read-only permission (0o444 = read-only for owner, group, others)
 			await fs.promises.chmod(path, 0o444)
-			await this.say("text", "🔒 **Plan file locked (read-only) to prevent accidental modifications.**")
+			await this.say(
+				"text",
+				"🔒 **계획 파일이 잠겼습니다 (읽기 전용)**\n\n이제 계획 파일은 실수로 수정되지 않도록 잠금 처리되었습니다.\n\n필요할 경우, 파일 속성에서 읽기 전용을 해제하여 편집할 수 있습니다.",
+			)
 		} catch (error) {
 			console.warn("[confirmPlanAndUpdate] Failed to set plan file as read-only:", error)
-			await this.say("text", "⚠️ **Warning: Could not lock plan file as read-only.**")
+			await this.say(
+				"text",
+				"⚠️ **계획 파일을 읽기 전용으로 잠글 수 없습니다.**\n\n파일 권한 문제로 인해 계획 파일을 보호할 수 없었지만, 계획은 정상적으로 확정되었습니다. 실수로 계획 파일을 수정하지 않도록 주의해 주세요.",
+			)
 		}
 
 		// Remove snapshot file as it's no longer needed
@@ -1244,11 +1254,7 @@ export class Task {
 		}
 
 		console.log("[confirmPlanAndUpdate] Successfully Plan confirmed, tracker updated, file locked, and snapshot removed.")
-		if (!diff) {
-			return false
-		} else {
-			return true
-		}
+		return !!diff
 	}
 
 	private async resumeTaskFromHistory() {
@@ -1484,7 +1490,6 @@ export class Task {
 
 		// reuse the existing streaming machinery
 		const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1, "claude-sonnet-4-20250514")
-		// const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1, "claude-3-7-sonnet-20250219")
 		let assistantText = ""
 		const start = performance.now()
 
