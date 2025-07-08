@@ -120,6 +120,7 @@ export type ClineAsk =
 	| "summarize_task"
 	| "report_bug"
 	| "ask_proceed"
+	| "ask_retry"
 	| "ask_check"
 
 export type ClineSay =
