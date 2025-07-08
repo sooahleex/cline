@@ -962,26 +962,6 @@ export class Controller {
 		if (this.phaseTracker?.isAllComplete()) {
 			this.phaseTracker?.deleteCheckpoint()
 			this.phaseTracker?.deletePlanMD()
-			// try {
-			// 	let baseUri: vscode.Uri
-			// 	const ws = vscode.workspace.workspaceFolders
-
-			// 	if (ws && ws.length > 0) {
-			// 		baseUri = vscode.Uri.joinPath(ws[0].uri, ".cline")
-			// 	} else {
-			// 		baseUri = vscode.Uri.joinPath(this.context.globalStorageUri, ".cline")
-			// 	}
-
-			// 	const checkpointPath = vscode.Uri.joinPath(baseUri, "phase-checkpoint.json")
-
-			// 	try {
-			// 		await vscode.workspace.fs.delete(checkpointPath, { recursive: false, useTrash: false })
-			// 	} catch {
-			// 		// Ignore errors, such as if file doesn't exist
-			// 	}
-			// } catch (e) {
-			// 	console.error("Error clearing checkpoint file:", e)
-			// }
 		}
 	}
 
