@@ -83,8 +83,8 @@ export async function newTask(controller: Controller, request: NewTaskRequest): 
 		}).filter(([_, value]) => value !== undefined),
 	)
 
-	let taskId: string | undefined
-	if (controller.phaseTracker === undefined) {
+	let taskId: string | undefined		
+	if (controller.phaseTracker === undefined || controller.phaseTracker.isAllComplete()) {
 		taskId = await controller.initTask(request.text, request.images, request.files, undefined, filteredTaskSettings)
 	} else {
 		const spawnedTaskId = await controller.spawnNewTask(request.text, request.images, request.files, undefined, filteredTaskSettings)
