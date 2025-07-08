@@ -617,7 +617,7 @@ export class PhaseTracker {
 		await this.completePhase(ps.index)
 	}
 
-	public async markCurrentPhaseSkipped(): Promise<void> {
+	public async markCurrentPhaseSkipped(skipRest: boolean = false): Promise<void> {
 		if (
 			this.currentPhaseIndex < 0 ||
 			this.currentPhaseIndex >= this.phaseStates.length ||
@@ -629,7 +629,18 @@ export class PhaseTracker {
 
 		const ps = this.phaseStates[this.currentPhaseIndex]
 		ps.status = PhaseStatus.Skipped
+		ps.startTime = Date.now()
 		ps.endTime = Date.now()
+
+		if (skipRest) {
+			// Skip all remaining phases
+			for (let i = this.currentPhaseIndex + 1; i < this.phaseStates.length; i++) {
+				const phase = this.phaseStates[i]
+				phase.status = PhaseStatus.Skipped
+				phase.startTime = Date.now()
+				phase.endTime = Date.now()
+			}
+		}
 	}
 
 	public updateTaskIdPhase(phaseId: number, taskId: string): void {
@@ -670,7 +681,14 @@ export class PhaseTracker {
 	}
 
 	public hasNextPhase(): boolean {
-		return this.currentPhaseIndex < this.phaseStates.length - 1
+		// Check if there are any pending phases after the current one
+		for (let i = this.currentPhaseIndex + 1; i < this.phaseStates.length; i++) {
+			const phase = this.phaseStates[i]
+			if (phase.status === PhaseStatus.Pending) {
+				return true
+			}
+		}
+		return false
 	}
 
 	public updatePhase(): void {
