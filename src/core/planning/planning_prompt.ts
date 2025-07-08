@@ -504,44 +504,59 @@ export const PROMPTS = {
     </execution_plan>
   </output_format>
 </ai_coding_agent>`,
-	MOVE_NEXT_PHASE_ASK: `### Ready to Continue?
 
-The current phase has been completed successfully.
+	PROCEED_TO_PLAN_MODE_ASK: `### 계획 모드를 사용하시겠습니까?
 
-**Would you like to move to the next phase of your project?**
+복잡한 작업을 더 효과적으로 구조화하는 데 도움이 되는 계획 모드를 사용할 수 있습니다.
 
-This will begin the next planned step in your development process.`,
-	CHECK_PLAN_ASK: `### Plan Generated Successfully
+**현재 계획이 비활성화되어 있다면, 활성화하면 다음과 같은 기능을 제공합니다:**
+- **작업 분해** - 작업을 명확하고 관리 가능한 단계로 나눕니다
+- **체계적 구성** - 개발 프로세스를 체계적으로 구성합니다
+- **진행 상황 추적** - 각 구현 단계의 진행 상황을 추적합니다
+- **통제권 제공** - 실행 전에 계획을 검토하고 승인할 수 있는 통제권을 제공합니다
 
-Your project plan has been created and saved as a markdown file. 
+**이 특정 작업에 대해 계획 모드를 활성화하시겠습니까?**
 
-**What to do next:**
-1. **Review** the generated plan
-2. **Edit** if any changes are needed  
-3. **Confirm** by clicking the button below to proceed
+이를 통해 요청을 가장 체계적이고 효과적인 방식으로 처리할 수 있습니다.`,
 
-*You can modify the plan file directly before confirming.*`,
-	PROCEED_WITH_PLAN_ASK: `### Ready to Start Implementation?
+	CHECK_PLAN_ASK: `### 계획이 성공적으로 생성되었습니다
 
-Your plan has been reviewed and confirmed. 
+프로젝트 계획이 마크다운 파일로 생성되어 저장되었습니다.
 
-**What happens next:**
-- **Phase-by-phase execution** will begin
-- **Sequential development** following your plan  
-- **Progress tracking** through each phase
+**다음 단계:**
+1. **검토** - 생성된 계획을 확인하세요
+2. **편집** - 필요한 경우 수정하세요  
+3. **확인** - 아래 버튼을 클릭하여 진행하세요
 
-Ready to start building your project?`,
-	PROCEED_TO_PLAN_MODE_ASK: `### Would You Like to Use Planning Mode?
+*확인하기 전에 계획 파일을 직접 수정할 수 있습니다.*`,
 
-Planning mode is available to help structure complex tasks more effectively.
+	RETRY_PLAN_ASK: `## 계획 단계에서 문제가 발생했습니다
 
-**If planning is currently disabled, enabling it will:**
-- **Break down** your task into clear, manageable phases
-- **Organize** the development process systematically  
-- **Track progress** through each implementation step
-- **Give you control** to review and approve the plan before execution
+계획 생성 중에 오류가 발생했습니다.
 
-**Would you like me to enable planning mode for this specific task?**
+**다음 중 하나를 선택해주세요:**
 
-This will help ensure we tackle your request in the most organized and effective way possible.`,
+**다시 시도** - Retry 버튼을 클릭하여 계획을 다시 생성합니다
+**건너뛰기** - Skip 버튼을 클릭하여 계획 없이 다음 단계로 진행합니다
+
+어떻게 진행하시겠습니까?`,
+
+	PROCEED_WITH_PLAN_ASK: `### 구현을 시작할 준비가 되셨나요?
+
+계획이 검토되고 확인되었습니다.
+
+**다음에 일어날 일:**
+- **단계별 실행**이 시작됩니다
+- **계획에 따른 순차 개발**이 진행됩니다
+- **각 단계별 진행 상황 추적**이 이루어집니다
+
+프로젝트 구축을 시작할 준비가 되셨나요?`,
+
+	MOVE_NEXT_PHASE_ASK: `### 계속 진행하시겠습니까?
+
+현재 단계가 성공적으로 완료되었습니다.
+
+**프로젝트의 다음 단계로 이동하시겠습니까?**
+
+개발 프로세스의 다음 계획된 단계가 시작됩니다.`,
 } as const
