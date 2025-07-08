@@ -1076,6 +1076,7 @@ export class Task {
 				if (!this.sidebarController.phaseTracker) {
 					throw new Error("PhaseTracker not initialized")
 				}
+				this.sidebarController.phaseTracker.updateTaskIdPhase(0, this.taskId)
 				// 고정된 plan.txt 파일에서 플랜 로드 (extension context 전달)
 				// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context, this.sidebarController.phaseTracker.getBaseUri())
 				const saveUri = this.sidebarController.phaseTracker.getBaseUri(this.sidebarController)
@@ -1100,10 +1101,10 @@ export class Task {
 					? `${PROMPTS.CHECK_PLAN_ASK}\n\n📁 **파일 위치:** \`${fileUri.fsPath}\``
 					: PROMPTS.CHECK_PLAN_ASK
 
-				const planconfirmmed = await this.askUserApproval("ask_check", planCheckMessage)
+				const planConfirmed = await this.askUserApproval("ask_check", planCheckMessage)
 
 				let diffExisted = false
-				if (planconfirmmed && fileUri && snapshotUri) {
+				if (planConfirmed && fileUri && snapshotUri) {
 					diffExisted = await this.confirmPlanAndUpdate(fileUri, snapshotUri)
 				}
 				if (!diffExisted) {
