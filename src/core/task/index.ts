@@ -1050,7 +1050,7 @@ export class Task {
 				// await this.executePlanningPhase(phaseAwarePrompt)
 			}
 			// Execution Phase
-			if (this.sidebarController.phaseTracker?.phaseStates[0].status === PhaseStatus.Completed) {
+			if (this.sidebarController.phaseTracker?.phaseStates[0]?.status === PhaseStatus.Completed) {
 				await this.executeCurrentPhase()
 			} else {
 				await this.initiateTaskLoop(userContent)
