@@ -1121,7 +1121,7 @@ export class Task {
 					await this.say("text", "🚫 **계획 실행이 취소되었습니다.**\n\n사용자가 제안된 계획의 실행을 중단했습니다.")
 					this.taskState.isPhaseRoot = false
 					this.sidebarController.phaseTracker!.markCurrentPhaseSkipped(/** skipRest */ true)
-					break
+					return
 				}
 
 				// Planning phase is complete, disabling root mode
@@ -1133,7 +1133,7 @@ export class Task {
 				await this.sidebarController.phaseTracker.markCurrentPhaseComplete()
 				this.sidebarController.phaseTracker.updatePhase()
 				await this.sidebarController.phaseTracker.saveCheckpoint()
-				break
+				return
 			} catch (error) {
 				attempts++
 				this.taskState.consecutivePlanningRetryCount = attempts
@@ -1148,10 +1148,12 @@ export class Task {
 					// Planning failed, proceed with normal task execution
 					this.taskState.isPhaseRoot = false
 					this.sidebarController.phaseTracker!.markCurrentPhaseSkipped()
-					break
+					return
 				}
 			}
 		}
+
+		// If we reach here, it means max retries exceeded
 		await this.say("text", `⚠️ **계획 단계가 3회 이상 실패했습니다. 계획을 건너뛰고 다음 단계로 진행합니다.**`)
 
 		// Planning failed, proceed with normal task execution
