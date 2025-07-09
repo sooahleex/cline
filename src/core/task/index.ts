@@ -76,7 +76,7 @@ import { ensureLocalClineDirExists } from "../context/instructions/user-instruct
 import { refreshWorkflowToggles } from "../context/instructions/user-instructions/workflows"
 import { Controller } from "../controller"
 import { buildPhasePrompt } from "../planning/build_prompt"
-import { PhaseTracker, parsePlanFromOutput } from "../planning/phase-tracker"
+import { PhaseStatus, PhaseTracker, parsePlanFromOutput } from "../planning/phase-tracker"
 import { PROMPTS } from "../planning/planning_prompt"
 import { getPlanMarkdownDiff, saveParsedPlanAsMarkdown } from "../planning/utils"
 import { StateManager } from "../storage/StateManager"
@@ -796,16 +796,16 @@ export class Task {
 				})
 			}
 		}
-		let planned
+
 		if (autoApprovalSettings.actions.usePhasePlanning) {
 			// Planning Phase
 			if (this.taskState.isPhaseRoot) {
 				// TODO: PLANNING
-				planned = await this.executePlanningPhase(userContent)
+				await this.executePlanningPhase(userContent)
 				// await this.executePlanningPhase(phaseAwarePrompt)
 			}
 			// Execution Phase
-			if (planned) {
+			if (this.controller.phaseTracker?.phaseStates[0]?.status === PhaseStatus.Completed) {
 				await this.executeCurrentPhase()
 			} else {
 				await this.initiateTaskLoop(userContent)
@@ -816,7 +816,7 @@ export class Task {
 	}
 
 	// TODO: PLANNING
-	private async executePlanningPhase(userBlocks: UserContent): Promise<boolean> {
+	private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
 		// private async executePlanningPhase(userBlocks: string): Promise<void> {
 		const MAX_RETRIES = 3
 		let attempts = 0
@@ -831,7 +831,7 @@ export class Task {
 				if (!this.controller.phaseTracker) {
 					throw new Error("PhaseTracker not initialized")
 				}
-				this.sidebarController.phaseTracker.updateTaskIdPhase(0, this.taskId)
+				this.controller.phaseTracker.updateTaskIdPhase(0, this.taskId)
 				// 고정된 plan.txt 파일에서 플랜 로드 (extension context 전달)
 				// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context, this.sidebarController.phaseTracker.getBaseUri())
 				const saveUri = this.controller.phaseTracker.getBaseUri(this.controller)
@@ -875,8 +875,8 @@ export class Task {
 				if (!proceedApproved) {
 					await this.say("text", "🚫 **계획 실행이 취소되었습니다.**\n\n사용자가 제안된 계획의 실행을 중단했습니다.")
 					this.taskState.isPhaseRoot = false
-					this.sidebarController.phaseTracker!.markCurrentPhaseSkipped(/** skipRest */ true)
-					return false // Abort planning phase
+					this.controller.phaseTracker!.markCurrentPhaseSkipped(/** skipRest */ true)
+					return
 				}
 
 				// Planning phase is complete, disabling root mode
@@ -888,7 +888,7 @@ export class Task {
 				await this.controller.phaseTracker.markCurrentPhaseComplete()
 				this.controller.phaseTracker.updatePhase()
 				await this.controller.phaseTracker.saveCheckpoint()
-				return true
+				return
 			} catch (error) {
 				attempts++
 				this.taskState.consecutivePlanningRetryCount = attempts
@@ -903,16 +903,17 @@ export class Task {
 					// Planning failed, proceed with normal task execution
 					this.taskState.isPhaseRoot = false
 					this.controller.phaseTracker!.markCurrentPhaseSkipped()
-					return false // Exit planning phase since we're now in normal execution
+					return
 				}
 			}
 		}
+
+		// If we reach here, it means max retries exceeded
 		await this.say("text", `⚠️ **계획 단계가 3회 이상 실패했습니다. 계획을 건너뛰고 다음 단계로 진행합니다.**`)
 
 		// Planning failed, proceed with normal task execution
 		this.taskState.isPhaseRoot = false
 		this.controller.phaseTracker!.markCurrentPhaseSkipped()
-		return false // Return false if all retries are exhausted
 	}
 
 	private async executeCurrentPhase(): Promise<void> {
