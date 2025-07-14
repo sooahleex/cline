@@ -2331,8 +2331,53 @@ export class ToolExecutor {
 						let images: string[] | undefined
 						let completionFiles: string[] | undefined
 						await this.sidebarController.onPhaseCompleted()
+						const phaseTracker = this.sidebarController.phaseTracker
 						if (this.taskState.phaseFinished) {
 							if (this.sidebarController.phaseTracker?.isAllComplete()) {
+								const shouldRetry = await this.sidebarController.task?.askUserApproval(
+									"ask_retry",
+									PROMPTS.RETRY_PHASE_ASK,
+								)
+
+								if (shouldRetry && phaseTracker?.canRetryCurrentPhase()) {
+									// Retry the current phase
+									await this.say("text", `🔄 **Phase 재시도**\n\n현재 Phase를 다시 시작합니다.`)
+									await this.sidebarController.task?.retryCurrentPhase()
+									await this.saveCheckpoint()
+								} else if (shouldRetry && phaseTracker?.canRetryCurrentPhase()) {
+									// Maximum retries reached, force next phase
+									await this.say(
+										"text",
+										`⚠️ **재시도 한계 초과**\n\n최대 재시도 횟수(3회)를 초과했습니다. 전체 Task를 완료하였으므로, 종료합니다.`,
+									)
+									const {
+										response,
+										text,
+										images,
+										files: completionFiles,
+									} = await this.ask("completion_result", "", false)
+
+									if (response === "yesButtonClicked") {
+										this.pushToolResult("", block) // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
+										break
+									}
+									await this.say("user_feedback", text ?? "", images, completionFiles)
+									await this.saveCheckpoint()
+								} else {
+									const {
+										response,
+										text,
+										images,
+										files: completionFiles,
+									} = await this.ask("completion_result", "", false)
+
+									if (response === "yesButtonClicked") {
+										this.pushToolResult("", block) // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
+										break
+									}
+									await this.say("user_feedback", text ?? "", images, completionFiles)
+									await this.saveCheckpoint()
+								}
 								const {
 									response,
 									text,
@@ -2347,12 +2392,35 @@ export class ToolExecutor {
 								await this.say("user_feedback", text ?? "", images, completionFiles)
 								await this.saveCheckpoint()
 							} else {
-								const result = await this.sidebarController.task?.askUserApproval(
+								const approveProceed = await this.sidebarController.task?.askUserApproval(
 									"ask_proceed",
 									PROMPTS.MOVE_NEXT_PHASE_ASK,
 								)
-								if (!result) {
-									//TODO: (sa) handle user rejecting the move to next phase
+								if (!approveProceed) {
+									// Handle user rejecting the move to next phase
+									const shouldRetry = await this.sidebarController.task?.askUserApproval(
+										"ask_retry",
+										PROMPTS.RETRY_PHASE_ASK,
+									)
+									if (shouldRetry && phaseTracker?.canRetryCurrentPhase()) {
+										// Retry the current phase
+										await this.say("text", `🔄 **Phase 재시도**\n\n현재 Phase를 다시 시작합니다.`)
+										await this.sidebarController.task?.retryCurrentPhase()
+									} else if (shouldRetry && phaseTracker?.canRetryCurrentPhase()) {
+										// Maximum retries reached, force next phase
+										await this.say(
+											"text",
+											`⚠️ **재시도 한계 초과**\n\n최대 재시도 횟수(3회)를 초과했습니다. 다음 Phase로 강제 이동합니다.`,
+										)
+										await this.sidebarController.task?.forceNextPhase()
+									} else {
+										await this.sidebarController.task?.forceNextPhase()
+									}
+								} else {
+									if (phaseTracker?.hasNextPhase()) {
+										phaseTracker.updatePhase()
+									}
+									await phaseTracker?.saveCheckpoint()
 								}
 								await this.saveCheckpoint()
 							}

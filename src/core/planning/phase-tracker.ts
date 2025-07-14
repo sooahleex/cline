@@ -48,6 +48,8 @@ export interface PhaseState {
 	status: PhaseStatus
 	startTime?: number
 	endTime?: number
+	retryCount?: number
+	startCheckpointHash?: string
 }
 
 export interface Requirement {
@@ -160,7 +162,7 @@ function filterSubtasksByPattern(subtasks: Subtask[], pattern: RegExp): Subtask[
 	// Re-index the filtered items
 	return filtered.map((subtask, index) => ({
 		...subtask,
-		index: index + 1,
+		index: index + 1, // Re-index starting from 1
 	}))
 }
 
@@ -568,6 +570,7 @@ export class PhaseTracker {
 			},
 			status: PhaseStatus.Pending,
 			startTime: Date.now(),
+			retryCount: 0,
 		})
 	}
 
@@ -581,6 +584,7 @@ export class PhaseTracker {
 				status: PhaseStatus.Pending,
 				startTime: undefined,
 				endTime: undefined,
+				retryCount: 0,
 			})
 		})
 		await this.saveCheckpoint()
@@ -607,6 +611,7 @@ export class PhaseTracker {
 				status: PhaseStatus.Pending,
 				startTime: undefined,
 				endTime: undefined,
+				retryCount: 0,
 			})
 		})
 
@@ -644,6 +649,9 @@ export class PhaseTracker {
 		}
 	}
 
+	/**
+	 * Update the task ID for a specific phase
+	 */
 	public updateTaskIdPhase(phaseId: number, taskId: string): void {
 		const phaseState = this.phaseStates.find((p) => p.index === phaseId)
 		if (!phaseState) {
@@ -651,6 +659,78 @@ export class PhaseTracker {
 		}
 		phaseState.taskId = taskId
 		this.saveCheckpoint()
+	}
+
+	/**
+	 * Get the current phase's retry count
+	 */
+	public getCurrentPhaseRetryCount(): number {
+		const ps = this.phaseStates[this.currentPhaseIndex]
+		return ps?.retryCount || 0
+	}
+
+	/**
+	 * Check if the current phase can be retried (max 3 attempts total)
+	 */
+	public canRetryCurrentPhase(): boolean {
+		const retryCount = this.getCurrentPhaseRetryCount()
+		return retryCount < 2
+	}
+
+	/**
+	 * Increment the retry count for the current phase and reset its status
+	 */
+	public async retryCurrentPhase(): Promise<void> {
+		const ps = this.phaseStates[this.currentPhaseIndex]
+		if (!ps) {
+			throw new Error("No current phase to retry")
+		}
+
+		// Increment retry count
+		ps.retryCount = (ps.retryCount || 0) + 1
+
+		// Reset phase status to pending
+		ps.status = PhaseStatus.Pending
+		ps.startTime = undefined
+		ps.endTime = undefined
+		ps.startCheckpointHash = undefined // Clear start checkpoint hash
+
+		await this.saveCheckpoint()
+	}
+
+	/**
+	 * Force move to next phase when retry limit is exceeded
+	 */
+	public async forceNextPhase(): Promise<void> {
+		const ps = this.phaseStates[this.currentPhaseIndex]
+		if (ps) {
+			ps.status = PhaseStatus.Failed
+			ps.endTime = Date.now()
+		}
+
+		if (this.hasNextPhase()) {
+			this.updatePhase()
+		}
+
+		await this.saveCheckpoint()
+	}
+
+	/**
+	 * Set the start checkpoint hash for the current phase
+	 */
+	public setCurrentPhaseStartCheckpoint(checkpointHash: string): void {
+		const ps = this.phaseStates[this.currentPhaseIndex]
+		if (ps) {
+			ps.startCheckpointHash = checkpointHash
+		}
+	}
+
+	/**
+	 * Get the start checkpoint hash for the current phase
+	 */
+	public getCurrentPhaseStartCheckpoint(): string | undefined {
+		const ps = this.phaseStates[this.currentPhaseIndex]
+		return ps?.startCheckpointHash
 	}
 
 	public async completePhase(phaseId: number): Promise<void> {
