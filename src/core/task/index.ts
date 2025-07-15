@@ -100,6 +100,7 @@ import { refinePrompt } from "./prompt-refinement"
 import { TaskState } from "./TaskState"
 import { ToolExecutor } from "./ToolExecutor"
 import { detectAvailableCliTools, extractProviderDomainFromUrl, updateApiReqMsg } from "./utils"
+import fs from "fs/promises"
 
 export type ToolResponse = string | Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam>
 type UserContent = Array<Anthropic.ContentBlockParam>
@@ -931,17 +932,37 @@ export class Task {
 			let refinementAttempts = 0
 			let refinementSucceeded = false
 
-			while (!refinementSucceeded && refinementAttempts <= MAX_REFINEMENT_RETRIES) {
+			while (!refinementSucceeded && task && refinementAttempts <= MAX_REFINEMENT_RETRIES) {
 				try {
 					console.log(
 						`[Task] Applying prompt refinement... (attempt ${refinementAttempts + 1}/${MAX_REFINEMENT_RETRIES + 1})`,
 					)
 					const refinedResult = await refinePrompt(task, this.api, this)
 
-					if (refinedResult.success) {
+					if (refinedResult.success && refinedResult.fileUri) {
 						task = refinedResult.refinedPrompt
 						refinementSucceeded = true
 						console.log("[Task] Prompt refinement completed successfully")
+
+						// Ask user to confirm the refined prompt
+						const refinePromptCheckMessage = refinedResult.fileUri
+							? `${PROMPTS.CHECK_REFINE_PROMPT_ASK}\n\n📁 **파일 위치:** \`${refinedResult.fileUri.fsPath}\``
+							: PROMPTS.CHECK_REFINE_PROMPT_ASK
+
+						const refinePromptConfirmed = await this.askUserApproval("ask_check", refinePromptCheckMessage)
+						if (refinePromptConfirmed) {
+							// Update task from refined prompt file
+							task = await fs.readFile(refinedResult.fileUri.fsPath, "utf-8").catch((error: any) => {
+								console.warn("[Task] Failed to read refined prompt file:", error)
+								return task // Fallback to original task if reading fails
+							})
+
+							// Delete snapshot file
+							const snapshotPath = refinedResult.fileUri.fsPath.replace(/\.md$/, "-snapshot.md")
+							await fs.rm(snapshotPath).catch((error: any) => {
+								console.warn("[Task] Failed to delete snapshot file:", error)
+							})
+						}
 					} else {
 						throw new Error("Prompt refinement returned success: false")
 					}
