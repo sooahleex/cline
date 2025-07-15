@@ -95,7 +95,7 @@ import { createDiffViewProvider, getHostBridgeProvider } from "@/hosts/host-prov
 import { PhaseTracker, parsePlanFromOutput, parsePlanFromFixedFile, PhaseStatus } from "../planning/phase-tracker"
 import { buildPhasePrompt } from "../planning/build_prompt"
 import { PROMPTS } from "../planning/planning_prompt"
-import { saveParsedPlanAsMarkdown, getPlanMarkdownDiff } from "../planning/utils"
+import { saveParsedPlanAsMarkdown, getPlanMarkdownDiff, PLANNING_MAX_RETRIES, PHASE_RETRY_LIMIT } from "../planning/utils"
 import { Controller } from "../controller"
 // refinePrompt
 import { getAllExtensionState } from "../storage/state"
@@ -1107,8 +1107,8 @@ export class Task {
 			// Planning Phase
 			if (this.taskState.isPhaseRoot) {
 				// TODO: PLANNING
-				await this.executePlanningPhase(userContent)
-				// await this.executePlanningPhase(phaseAwarePrompt)
+				// await this.executePlanningPhase(userContent)
+				await this.executePlanningPhase(phaseAwarePrompt)
 			}
 			// Execution Phase
 			if (this.sidebarController.phaseTracker?.phaseStates[0]?.status === PhaseStatus.Completed) {
@@ -1122,18 +1122,17 @@ export class Task {
 	}
 
 	// TODO: PLANNING
-	private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
-		// private async executePlanningPhase(userBlocks: string): Promise<void> {
-		const MAX_RETRIES = 3
+	// private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
+	private async executePlanningPhase(userBlocks: string): Promise<void> {
 		let attempts = 0
 
-		while (attempts < MAX_RETRIES) {
+		while (attempts < PLANNING_MAX_RETRIES) {
 			try {
 				if (attempts > 0) {
 					await this.say("text", "🔄 **계획을 다시 시도합니다...**")
 				}
 
-				const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
+				// const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
 				if (!this.sidebarController.phaseTracker) {
 					throw new Error("PhaseTracker not initialized")
 				}
@@ -1142,13 +1141,13 @@ export class Task {
 				// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context, this.sidebarController.phaseTracker.getBaseUri())
 				const saveUri = this.sidebarController.phaseTracker.getBaseUri(this.sidebarController)
 				// TODO: PLANNING
-				const {
-					projOverview,
-					executionPlan,
-					requirements,
-					phases: planSteps,
-				} = parsePlanFromOutput(firstAssistantMessage)
-				// const { projOverview, executionPlan, requirements, phases: planSteps } = parsePlanFromOutput(userBlocks)
+				// const {
+				// 	projOverview,
+				// 	executionPlan,
+				// 	requirements,
+				// 	phases: planSteps,
+				// } = parsePlanFromOutput(firstAssistantMessage)
+				const { projOverview, executionPlan, requirements, phases: planSteps } = parsePlanFromOutput(userBlocks)
 				const parsedPlan = { projOverview, executionPlan, requirements, phases: planSteps }
 				const { fileUri, snapshotUri } = await saveParsedPlanAsMarkdown(parsedPlan, saveUri, this.taskId).catch(
 					(error) => {
@@ -1215,7 +1214,10 @@ export class Task {
 		}
 
 		// If we reach here, it means max retries exceeded
-		await this.say("text", `⚠️ **계획 단계가 3회 이상 실패했습니다. 계획을 건너뛰고 다음 단계로 진행합니다.**`)
+		await this.say(
+			"text",
+			`⚠️ **계획 단계가 ${PLANNING_MAX_RETRIES}회 이상 실패했습니다. 계획을 건너뛰고 다음 단계로 진행합니다.**`,
+		)
 
 		// Planning failed, proceed with normal task execution
 		this.taskState.isPhaseRoot = false
@@ -1235,10 +1237,10 @@ export class Task {
 			if (ps.retryCount && ps.retryCount > 0) {
 				ps.status = PhaseStatus.InProgress
 				ps.startTime = Date.now()
-				prompt = `${prompt}\n\n⚠️ **Phase Retry ${ps.retryCount}/2** - This phase is being retried. Please carefully review the previous attempt and make necessary improvements.`
+				prompt = `${prompt}\n\n⚠️ **Phase Retry ${ps.retryCount}/${PHASE_RETRY_LIMIT}** - This phase is being retried. Please carefully review the previous attempt and make necessary improvements.`
 				await this.say(
 					"text",
-					`🔄 **Phase 재시도 중...**\n\n현재 Phase를 다시 시작합니다. (${ps.retryCount}/2번째 재시도)`,
+					`🔄 **Phase 재시도 중...**\n\n현재 Phase를 다시 시작합니다. (${ps.retryCount}/${PHASE_RETRY_LIMIT}번째 재시도)`,
 				)
 			}
 

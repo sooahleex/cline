@@ -1,6 +1,6 @@
 import * as vscode from "vscode"
 import { Controller } from "../controller"
-import { extractTag, extractTagAsLines } from "./utils"
+import { extractTag, extractTagAsLines, PHASE_RETRY_LIMIT } from "./utils"
 
 export enum PhaseStatus {
 	Pending = "pending",
@@ -674,18 +674,18 @@ export class PhaseTracker {
 	 */
 	public canRetryCurrentPhase(): boolean {
 		const retryCount = this.getCurrentPhaseRetryCount()
-		return retryCount < 2
+		return retryCount < PHASE_RETRY_LIMIT
 	}
 
 	/**
 	 * Increment the retry count for the current phase and reset its status
 	 */
 	public async retryCurrentPhase(): Promise<void> {
-		const ps = this.phaseStates[this.currentPhaseIndex]
-		if (!ps) {
-			throw new Error("No current phase to retry")
+		if (!this.phaseStates[this.currentPhaseIndex]) {
+			throw new Error("Invalid phase index during retry")
 		}
 
+		const ps = this.phaseStates[this.currentPhaseIndex]
 		// Increment retry count
 		ps.retryCount = (ps.retryCount || 0) + 1
 
@@ -696,6 +696,26 @@ export class PhaseTracker {
 		ps.startCheckpointHash = undefined // Clear start checkpoint hash
 
 		await this.saveCheckpoint()
+	}
+
+	public getPhaseCompletionAction(): "all_complete" | "partial_complete" | "non_phase" {
+		if (this.isAllComplete()) {
+			return "all_complete"
+		} else if (this.currentPhaseIndex < this.phaseStates.length - 1) {
+			return "partial_complete"
+		} else {
+			return "non_phase"
+		}
+	}
+
+	public shouldShowRetryOption(): boolean {
+		return this.canRetryCurrentPhase()
+	}
+
+	public getRetryLimitMessage(): string {
+		const isAllComplete = this.isAllComplete()
+		const action = isAllComplete ? "종료합니다" : "다음 Phase로 강제 이동합니다"
+		return `⚠️ **재시도 한계 초과**\n\n최대 재시도 횟수(${PHASE_RETRY_LIMIT}회)를 초과했습니다. ${action}.`
 	}
 
 	/**
