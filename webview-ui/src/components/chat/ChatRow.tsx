@@ -1486,6 +1486,7 @@ export const ChatRowContent = memo(
 							</>
 						)
 					case "ask_retry":
+					case "ask_final_retry":
 						return (
 							<>
 								<div style={headerStyle}>
