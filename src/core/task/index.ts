@@ -1107,8 +1107,8 @@ export class Task {
 			// Planning Phase
 			if (this.taskState.isPhaseRoot) {
 				// TODO: PLANNING
-				// await this.executePlanningPhase(userContent)
-				await this.executePlanningPhase(phaseAwarePrompt)
+				await this.executePlanningPhase(userContent)
+				// await this.executePlanningPhase(phaseAwarePrompt)
 			}
 			// Execution Phase
 			if (this.sidebarController.phaseTracker?.phaseStates[0]?.status === PhaseStatus.Completed) {
@@ -1122,8 +1122,8 @@ export class Task {
 	}
 
 	// TODO: PLANNING
-	// private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
-	private async executePlanningPhase(userBlocks: string): Promise<void> {
+	private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
+		// private async executePlanningPhase(userBlocks: string): Promise<void> {
 		let attempts = 0
 
 		while (attempts < PLANNING_MAX_RETRIES) {
@@ -1132,7 +1132,7 @@ export class Task {
 					await this.say("text", "🔄 **계획을 다시 시도합니다...**")
 				}
 
-				// const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
+				const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
 				if (!this.sidebarController.phaseTracker) {
 					throw new Error("PhaseTracker not initialized")
 				}
@@ -1141,13 +1141,13 @@ export class Task {
 				// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context, this.sidebarController.phaseTracker.getBaseUri())
 				const saveUri = this.sidebarController.phaseTracker.getBaseUri(this.sidebarController)
 				// TODO: PLANNING
-				// const {
-				// 	projOverview,
-				// 	executionPlan,
-				// 	requirements,
-				// 	phases: planSteps,
-				// } = parsePlanFromOutput(firstAssistantMessage)
-				const { projOverview, executionPlan, requirements, phases: planSteps } = parsePlanFromOutput(userBlocks)
+				const {
+					projOverview,
+					executionPlan,
+					requirements,
+					phases: planSteps,
+				} = parsePlanFromOutput(firstAssistantMessage)
+				// const { projOverview, executionPlan, requirements, phases: planSteps } = parsePlanFromOutput(userBlocks)
 				const parsedPlan = { projOverview, executionPlan, requirements, phases: planSteps }
 				const { fileUri, snapshotUri } = await saveParsedPlanAsMarkdown(parsedPlan, saveUri, this.taskId).catch(
 					(error) => {
@@ -1370,7 +1370,6 @@ export class Task {
 		}
 
 		await this.sidebarController.phaseTracker.forceNextPhase()
-		await this.say("text", `⚠️ **Phase 재시도 한계 초과**\n\n최대 재시도 횟수를 초과했습니다. 다음 Phase로 강제 이동합니다.`)
 	}
 
 	async askUserApproval(type: ClineAsk, partialMessage?: string): Promise<boolean> {

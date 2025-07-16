@@ -4,7 +4,7 @@ import { ParsedPlan } from "./phase-tracker"
 import * as fs from "fs"
 
 export const PHASE_RETRY_LIMIT = 2
-export const PLANNING_MAX_RETRIES = 3
+export const PLANNING_MAX_RETRIES = 2
 
 /**
  * Separates multi-line text into lines and returns them as a cleaned array.
