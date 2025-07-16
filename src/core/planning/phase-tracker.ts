@@ -724,7 +724,7 @@ export class PhaseTracker {
 	public async forceNextPhase(): Promise<void> {
 		const ps = this.phaseStates[this.currentPhaseIndex]
 		if (ps) {
-			ps.status = PhaseStatus.Failed
+			ps.status = PhaseStatus.Skipped // Failed TODO: (sa)
 			ps.endTime = Date.now()
 		}
 
