@@ -7,7 +7,8 @@ import { findLastIndex } from "@shared/array"
 import { COMPLETION_RESULT_CHANGES_FLAG } from "@shared/ExtensionMessage"
 import { telemetryService } from "@/services/telemetry"
 import { ClineDefaultTool } from "@/shared/tools"
-import { buildPhasePrompt } from "../../../planning/build_prompt"
+import { PROMPTS } from "../../../planning/planning_prompt"
+import { PHASE_RETRY_LIMIT } from "../../../planning/utils"
 import type { ToolResponse } from "../../index"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
 import type { TaskConfig } from "../types/TaskConfig"
@@ -81,6 +82,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 			}
 		}
 
+		config.taskState.phaseFinished = true // reset phase finished flag
 		let commandResult: any
 		const lastMessage = config.messageState.getClineMessages().at(-1)
 
@@ -122,6 +124,70 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 			telemetryService.captureTaskCompleted(config.ulid)
 		}
 
+		const handleCompletionResult = async (): Promise<string> => {
+			const { response, text, images, files: completionFiles } = await config.callbacks.ask("completion_result", "", false)
+
+			if (response === "yesButtonClicked") {
+				return ""
+			}
+
+			await config.callbacks.say("user_feedback", text ?? "", images, completionFiles)
+			return ""
+		}
+
+		const handleAllPhasesComplete = async (phaseTracker: any): Promise<void> => {
+			const shouldRetry = await config.sidebarController.task?.askUserApproval(
+				"ask_final_retry",
+				PROMPTS.FINAL_RETRY_PHASE_ASK,
+			)
+
+			if (shouldRetry && phaseTracker.canRetryCurrentPhase()) {
+				await config.callbacks.say("text", `🔄 **Phase 재시도**\n\n현재 Phase를 다시 시작합니다.`)
+				await config.sidebarController.task?.retryCurrentPhase()
+				return
+			} else if (shouldRetry && !phaseTracker.canRetryCurrentPhase()) {
+				await config.callbacks.say("text", phaseTracker.getRetryLimitMessage())
+			} else {
+				await config.callbacks.say("text", `✅ **모든 Phase 완료**\n\n모든 Phase가 완료되었습니다.`)
+			}
+			await handleCompletionResult()
+		}
+
+		const handlePartialPhasesComplete = async (phaseTracker: any): Promise<void> => {
+			const approveProceed = await config.sidebarController.task?.askUserApproval(
+				"ask_proceed",
+				PROMPTS.MOVE_NEXT_PHASE_ASK,
+			)
+
+			if (approveProceed) {
+				// Move to next phase
+				if (phaseTracker?.hasNextPhase()) {
+					phaseTracker.updatePhase()
+				}
+				await phaseTracker?.saveCheckpoint()
+				return
+			}
+
+			// User rejected move to next phase
+			const shouldRetry = await config.sidebarController.task?.askUserApproval("ask_retry", PROMPTS.RETRY_PHASE_ASK)
+
+			if (shouldRetry && phaseTracker?.canRetryCurrentPhase()) {
+				// Retry the current phase
+				await config.callbacks.say("text", `🔄 **Phase 재시도**\n\n현재 Phase를 다시 시작합니다.`)
+				await config.sidebarController.task?.retryCurrentPhase()
+			} else if (shouldRetry && !phaseTracker?.canRetryCurrentPhase()) {
+				// Maximum retries reached, force next phase
+				await config.callbacks.say(
+					"text",
+					`⚠️ **재시도 한계 초과**\n\n최대 재시도 횟수(${PHASE_RETRY_LIMIT}회)를 초과했습니다. 다음 Phase로 강제 이동합니다.`,
+				)
+				await config.sidebarController.task?.forceNextPhase()
+			} else {
+				// No retry, force next phase
+				await config.sidebarController.task?.forceNextPhase()
+			}
+		}
+
 		// we already sent completion_result says, an empty string asks relinquishes control over button and field
 		// in case last command was interactive and in partial state, the UI is expecting an ask response. This ends the command ask response, freeing up the UI to proceed with the completion ask.
 		if (config.messageState.getClineMessages().at(-1)?.ask === "command_output") {
@@ -135,45 +201,22 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 		let text: string | undefined
 		let images: string[] | undefined
 		let completionFiles: string[] | undefined
-		config.sidebarController.onPhaseCompleted()
-		if (config.taskState.phaseFinished) {
-			if (config.sidebarController.phaseTracker?.isAllComplete()) {
-				const {
-					response,
-					text,
-					images,
-					files: completionFiles,
-				} = await config.callbacks.ask("completion_result", "", false)
-
-				if (response === "yesButtonClicked") {
-					return "" // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
-				}
-				await config.callbacks.say("user_feedback", text ?? "", images, completionFiles)
-			} else {
-				const phase = config.sidebarController.phaseTracker?.currentPhase
-				const total = config.sidebarController.phaseTracker?.totalPhases
-				const nextPhasePrompt = phase
-					? buildPhasePrompt(phase, total ?? 1, config.sidebarController.phaseTracker?.getProjectOverview() || "")
-					: ""
-				const {
-					response,
-					text,
-					images,
-					files: completionFiles,
-				} = await config.callbacks.ask("completion_result", nextPhasePrompt, false)
-
-				if (response === "yesButtonClicked") {
-					return "" // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
-				}
-				await config.callbacks.say("user_feedback", text ?? "", images, completionFiles)
-			}
-		} else {
-			const { response, text, images, files: completionFiles } = await config.callbacks.ask("completion_result", "", false)
-			if (response === "yesButtonClicked") {
-				return "" // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
-			}
-
-			await config.callbacks.say("user_feedback", text ?? "", images, completionFiles)
+		await config.sidebarController.onPhaseCompleted()
+		const phaseTracker = config.sidebarController.phaseTracker
+		if (!config.taskState.phaseFinished) {
+			await handleCompletionResult()
+		}
+		const completionAction = phaseTracker?.getPhaseCompletionAction()
+		switch (completionAction) {
+			case "all_complete":
+				await handleAllPhasesComplete(phaseTracker)
+				break
+			case "partial_complete":
+				await handlePartialPhasesComplete(phaseTracker)
+				break
+			default:
+				await handleCompletionResult()
+				break
 		}
 
 		const toolResults: (Anthropic.TextBlockParam | Anthropic.ImageBlockParam)[] = []
