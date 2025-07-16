@@ -93,7 +93,7 @@ import { Controller } from "../controller"
 import { buildPhasePrompt } from "../planning/build_prompt"
 import { PhaseStatus, PhaseTracker, parsePlanFromOutput } from "../planning/phase-tracker"
 import { PROMPTS } from "../planning/planning_prompt"
-import { getPlanMarkdownDiff, saveParsedPlanAsMarkdown } from "../planning/utils"
+import { getPlanMarkdownDiff, PHASE_RETRY_LIMIT, PLANNING_MAX_RETRIES, saveParsedPlanAsMarkdown } from "../planning/utils"
 import { StateManager } from "../storage/StateManager"
 import { FocusChainManager } from "./focus-chain"
 import { MessageStateHandler } from "./message-state"
@@ -523,18 +523,10 @@ export class Task {
 
 	// Create a temporary API handler with a specific model
 	private createTemporaryApiHandler(modelName: string): ApiHandler {
-		// Copy the current API configuration directly from this.api
-		// We need to maintain the original API's configuration and just change the model
-		const currentApi = this.api
-
-		// Create a new configuration with the specified model
 		// Get apiProvider and other properties directly from the original API
 		const tempConfig: ApiConfiguration = {
-			...(currentApi as any).options, // Directly access the options property if it exists
-			apiProvider: (currentApi as any).options?.apiProvider,
-			apiKey: (currentApi as any).options?.apiKey,
-			apiModelId: modelName, // Override with the requested model
-			taskId: this.taskId, // Ensure task ID is preserved
+			...this.stateManager.getApiConfiguration(),
+			actModeOpenRouterModelId: modelName, // Override with the requested model
 		}
 
 		const mode = this.stateManager.getGlobalSettingsKey("mode")
@@ -1045,10 +1037,9 @@ export class Task {
 	// TODO: PLANNING
 	private async executePlanningPhase(userBlocks: UserContent): Promise<void> {
 		// private async executePlanningPhase(userBlocks: string): Promise<void> {
-		const MAX_RETRIES = 3
 		let attempts = 0
 
-		while (attempts < MAX_RETRIES) {
+		while (attempts < PLANNING_MAX_RETRIES) {
 			try {
 				if (attempts > 0) {
 					await this.say("text", "🔄 **계획을 다시 시도합니다...**")
@@ -1136,7 +1127,10 @@ export class Task {
 		}
 
 		// If we reach here, it means max retries exceeded
-		await this.say("text", `⚠️ **계획 단계가 3회 이상 실패했습니다. 계획을 건너뛰고 다음 단계로 진행합니다.**`)
+		await this.say(
+			"text",
+			`⚠️ **계획 단계가 ${PLANNING_MAX_RETRIES}회 이상 실패했습니다. 계획을 건너뛰고 다음 단계로 진행합니다.**`,
+		)
 
 		// Planning failed, proceed with normal task execution
 		this.taskState.isPhaseRoot = false
@@ -1151,7 +1145,17 @@ export class Task {
 			const phase = this.controller.phaseTracker.currentPhase
 			const total = this.controller.phaseTracker.totalPhases
 			const phaseIndex = this.controller.phaseTracker.currentPhaseIndex
-			const prompt = buildPhasePrompt(phase, total, this.controller.phaseTracker.getProjectOverview())
+			const ps = this.controller.phaseTracker.phaseStates[phaseIndex]
+			let prompt = buildPhasePrompt(phase, total, this.controller.phaseTracker.getProjectOverview())
+			if (ps.retryCount && ps.retryCount > 0) {
+				ps.status = PhaseStatus.InProgress
+				ps.startTime = Date.now()
+				prompt = `${prompt}\n\n⚠️ **Phase Retry ${ps.retryCount}/${PHASE_RETRY_LIMIT}** - This phase is being retried. Please carefully review the previous attempt and make necessary improvements.`
+				await this.say(
+					"text",
+					`🔄 **Phase 재시도 중...**\n\n현재 Phase를 다시 시작합니다. (${ps.retryCount}/${PHASE_RETRY_LIMIT}번째 재시도)`,
+				)
+			}
 
 			this.controller.phaseTracker.updateTaskIdPhase(phaseIndex, this.taskId)
 
@@ -1171,10 +1175,111 @@ export class Task {
 			throw new Error("PhaseTracker not initialized")
 		}
 
+		// Save checkpoint at the start of phase if checkpoints are enabled
+		await this.savePhaseStartCheckpoint()
+
 		const userBlocks: UserContent = [{ type: "text", text: `<task>\n${currentPhasePrompt}\n</task>` }]
 
 		const phaseFinished = (await this.initiateTaskLoop(userBlocks)) || false
 		this.taskState.phaseFinished = phaseFinished
+	}
+
+	/**
+	 * Save checkpoint at the start of a phase
+	 */
+	private async savePhaseStartCheckpoint(): Promise<void> {
+		const checkpointsEnabled = this.stateManager.getGlobalSettingsKey("enableCheckpointsSetting")
+		try {
+			if (!checkpointsEnabled || !this.messageStateHandler.checkpointTracker || !this.controller.phaseTracker) {
+				// Save current state as checkpoint
+				const checkpointHash = await this.checkpointManager?.commit()
+
+				if (checkpointHash) {
+					// Store the checkpoint hash in phase tracker
+					this.controller.phaseTracker?.setCurrentPhaseStartCheckpoint(checkpointHash)
+
+					console.log(
+						`[savePhaseStartCheckpoint] Saved checkpoint for phase ${this.controller.phaseTracker?.currentPhaseIndex}: ${checkpointHash}`,
+					)
+				}
+			}
+		} catch (error) {
+			console.warn("Failed to save phase start checkpoint:", error)
+		}
+	}
+
+	/**
+	 * Retry the current phase from the beginning
+	 */
+	public async retryCurrentPhase(): Promise<void> {
+		if (!this.controller.phaseTracker) {
+			throw new Error("PhaseTracker not initialized")
+		}
+
+		// Check if retry is allowed
+		if (!this.controller.phaseTracker.canRetryCurrentPhase()) {
+			throw new Error("Maximum retry attempts reached for current phase")
+		}
+
+		// Rollback to phase start if possible
+		const checkpointsEnabled = this.stateManager.getGlobalSettingsKey("enableCheckpointsSetting")
+		const startCheckpointHash = this.controller.phaseTracker.getCurrentPhaseStartCheckpoint()
+		if (startCheckpointHash && checkpointsEnabled && this.messageStateHandler.checkpointTracker) {
+			try {
+				await this.say(
+					"text",
+					`🔄 **Phase 재시도 - 워크스페이스 롤백 중...**\n\nPhase 시작 시점으로 워크스페이스를 되돌리고 있습니다.`,
+				)
+
+				// Rollback to the checkpoint
+				await this.messageStateHandler.checkpointTracker.resetHead(startCheckpointHash)
+
+				await this.say("text", `✅ **워크스페이스 롤백 완료**\n\n현재 Phase에서 수행된 모든 변경사항이 되돌려졌습니다.`)
+			} catch (error) {
+				console.warn("Failed to rollback phase changes:", error)
+				await this.say(
+					"text",
+					`⚠️ **롤백 실패**\n\n워크스페이스 롤백에 실패했습니다: ${error instanceof Error ? error.message : "Unknown error"}`,
+				)
+			}
+		}
+
+		// Increment retry count and reset phase status
+		await this.controller.phaseTracker.retryCurrentPhase()
+	}
+
+	/**
+	 * Force move to next phase when retry limit is exceeded
+	 */
+	public async forceNextPhase(): Promise<void> {
+		if (!this.controller.phaseTracker) {
+			throw new Error("PhaseTracker not initialized")
+		}
+
+		// Rollback to phase start checkpoint if available
+		const checkpointsEnabled = this.stateManager.getGlobalSettingsKey("enableCheckpointsSetting")
+		const startCheckpointHash = this.controller.phaseTracker.getCurrentPhaseStartCheckpoint()
+		if (startCheckpointHash && checkpointsEnabled && this.messageStateHandler.checkpointTracker) {
+			try {
+				await this.say(
+					"text",
+					`🔄 **Phase 작업 되돌리는 중...**\n\nPhase 시작 시점으로 워크스페이스를 되돌리고 있습니다.`,
+				)
+
+				// Rollback to the checkpoint
+				await this.messageStateHandler.checkpointTracker.resetHead(startCheckpointHash)
+
+				await this.say("text", `✅ **워크스페이스 롤백 완료**\n\n현재 Phase에서 수행된 모든 변경사항이 되돌려졌습니다.`)
+			} catch (error) {
+				console.warn("Failed to rollback phase changes:", error)
+				await this.say(
+					"text",
+					`⚠️ **롤백 실패**\n\n워크스페이스 롤백에 실패했습니다: ${error instanceof Error ? error.message : "Unknown error"}`,
+				)
+			}
+		}
+
+		await this.controller.phaseTracker.forceNextPhase()
 	}
 
 	async askUserApproval(type: ClineAsk, partialMessage?: string): Promise<boolean> {
@@ -1532,7 +1637,7 @@ export class Task {
 		}
 
 		// reuse the existing streaming machinery
-		const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1, "claude-sonnet-4-20250514")
+		const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1, "anthropic/claude-sonnet-4")
 		let assistantText = ""
 		const start = performance.now()
 
