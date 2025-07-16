@@ -3,6 +3,9 @@ import * as fs from "fs"
 import * as vscode from "vscode"
 import { ParsedPlan } from "./phase-tracker"
 
+export const PHASE_RETRY_LIMIT = 2
+export const PLANNING_MAX_RETRIES = 2
+
 /**
  * Separates multi-line text into lines and returns them as a cleaned array.
  * - Removes empty lines.

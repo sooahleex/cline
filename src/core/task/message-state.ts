@@ -25,7 +25,7 @@ export class MessageStateHandler {
 	private apiConversationHistory: Anthropic.MessageParam[] = []
 	private clineMessages: ClineMessage[] = []
 	private taskIsFavorited: boolean
-	private checkpointTracker: CheckpointTracker | undefined
+	public checkpointTracker: CheckpointTracker | undefined
 	private updateTaskHistory: (historyItem: HistoryItem) => Promise<HistoryItem[]>
 	private taskId: string
 	private ulid: string
