@@ -828,6 +828,23 @@ export class PhaseTracker {
 		return phaseState.index
 	}
 
+	/**
+	 * Get all task IDs that are related to this PhaseTracker
+	 * This is used for UI grouping to show which tasks belong to the same planning session
+	 */
+	public getAllRelatedTaskIds(): string[] {
+		return this.phaseStates
+			.filter((phaseState) => phaseState.taskId && phaseState.taskId.trim() !== "")
+			.map((phaseState) => phaseState.taskId!)
+	}
+
+	/**
+	 * Check if a given taskId belongs to this PhaseTracker
+	 */
+	public isRelatedTask(taskId: string): boolean {
+		return this.phaseStates.some((phaseState) => phaseState.taskId === taskId)
+	}
+
 	public resetPhaseStatus(startIdx: number) {
 		// reset
 		this.phaseStates.slice(startIdx).forEach((item) => {

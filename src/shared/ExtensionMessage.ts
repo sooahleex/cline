@@ -60,6 +60,7 @@ export interface ExtensionState {
 	localCursorRulesToggles: ClineRulesToggles
 	localWindsurfRulesToggles: ClineRulesToggles
 	mcpResponsesCollapsed?: boolean
+	relatedTaskIds?: string[] // Task IDs that belong to the same planning session
 }
 
 export interface ClineMessage {

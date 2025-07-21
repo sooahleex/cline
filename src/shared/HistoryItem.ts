@@ -14,4 +14,9 @@ export type HistoryItem = {
 	conversationHistoryDeletedRange?: [number, number]
 	isFavorited?: boolean
 	checkpointTrackerErrorMessage?: string
+
+	// Planning session information
+	planningSessionId?: string // Unique ID for the planning session
+	phaseIndex?: number // Phase number within the session (1, 2, 3...)
+	totalPhases?: number // Total number of phases in the session
 }

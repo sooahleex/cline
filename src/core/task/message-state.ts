@@ -21,6 +21,7 @@ interface MessageStateHandlerParams {
 	updateTaskHistory: (historyItem: HistoryItem) => Promise<HistoryItem[]>
 	taskState: TaskState
 	checkpointTrackerErrorMessage?: string
+	getPlanningSessionInfo: () => { planningSessionId?: string; phaseIndex?: number; totalPhases?: number }
 }
 
 export class MessageStateHandler {
@@ -33,6 +34,7 @@ export class MessageStateHandler {
 	private context: vscode.ExtensionContext
 	private taskId: string
 	private taskState: TaskState
+	private getPlanningSessionInfo: () => { planningSessionId?: string; phaseIndex?: number; totalPhases?: number }
 
 	constructor(params: MessageStateHandlerParams) {
 		this.context = params.context
@@ -40,6 +42,7 @@ export class MessageStateHandler {
 		this.taskState = params.taskState
 		this.taskIsFavorited = params.taskIsFavorited ?? false
 		this.updateTaskHistory = params.updateTaskHistory
+		this.getPlanningSessionInfo = params.getPlanningSessionInfo
 		this.checkpointTrackerErrorMessage = this.taskState.checkpointTrackerErrorMessage
 	}
 
@@ -87,6 +90,7 @@ export class MessageStateHandler {
 				console.error("Failed to get task directory size:", taskDir, error)
 			}
 			const cwd = await getCwd(getDesktopDir())
+			const planningSessionInfo = this.getPlanningSessionInfo()
 			await this.updateTaskHistory({
 				id: this.taskId,
 				ts: lastRelevantMessage.ts,
@@ -102,6 +106,10 @@ export class MessageStateHandler {
 				conversationHistoryDeletedRange: this.taskState.conversationHistoryDeletedRange,
 				isFavorited: this.taskIsFavorited,
 				checkpointTrackerErrorMessage: this.taskState.checkpointTrackerErrorMessage,
+				// Planning session information
+				planningSessionId: planningSessionInfo.planningSessionId,
+				phaseIndex: planningSessionInfo.phaseIndex,
+				totalPhases: planningSessionInfo.totalPhases,
 			})
 		} catch (error) {
 			console.error("Failed to save cline messages:", error)

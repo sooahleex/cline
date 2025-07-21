@@ -792,6 +792,28 @@ export class Controller {
 
 		const localWorkflowToggles = ((await getWorkspaceState(this.context, "workflowToggles")) as ClineRulesToggles) || {}
 
+		// Get related task IDs from current PhaseTracker if it exists
+		let relatedTaskIds = this.phaseTracker?.getAllRelatedTaskIds() || []
+
+		// If no active PhaseTracker, extract related task IDs from task history
+		// based on planning session information stored in HistoryItem
+		if (relatedTaskIds.length === 0 && taskHistory && taskHistory.length > 0) {
+			// Find the most recent planning session
+			const recentTasksWithPlanningSession = taskHistory
+				.filter((task) => task.planningSessionId)
+				.sort((a, b) => b.ts - a.ts) // Sort by timestamp, newest first
+
+			if (recentTasksWithPlanningSession.length > 0) {
+				// Get the most recent planning session ID
+				const mostRecentSessionId = recentTasksWithPlanningSession[0].planningSessionId
+
+				// Find all tasks belonging to this planning session
+				relatedTaskIds = taskHistory
+					.filter((task) => task.planningSessionId === mostRecentSessionId)
+					.map((task) => task.id)
+			}
+		}
+
 		return {
 			version: this.context.extension?.packageJSON?.version ?? "",
 			apiConfiguration,
@@ -828,6 +850,7 @@ export class Controller {
 			welcomeViewCompleted: welcomeViewCompleted as boolean, // Can be undefined but is set to either true or false by the migration that runs on extension launch in extension.ts
 			mcpResponsesCollapsed,
 			terminalOutputLineLimit,
+			relatedTaskIds, // Add related task IDs for UI grouping
 		}
 	}
 
