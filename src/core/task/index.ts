@@ -390,7 +390,7 @@ export class Task {
 		const tempConfig: ApiConfiguration = {
 			...this.originalApiConfiguration,
 			actModeOpenRouterModelId: modelName, // Override with the requested model
-			taskId: this.taskId, // Ensure task ID is prethis.originalApiConfiguration = apiConfigurationserved
+			taskId: this.taskId, // Ensure task ID is preserved
 		}
 
 		// Build and return the temporary API handler
