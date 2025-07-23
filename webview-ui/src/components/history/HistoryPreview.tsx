@@ -278,13 +278,13 @@ const HistoryPreview = ({ showHistoryView }: HistoryPreviewProps) => {
 													}}
 												/>
 												<span
-													className="codicon codicon-organization scale-75"
+													className="codicon codicon-collapse-all scale-75"
 													style={{ color: "var(--vscode-button-background)" }}
 												/>
 												<span
 													className="text-xs font-semibold"
 													style={{ color: "var(--vscode-foreground)" }}>
-													Planning Session ({tasks.length} phases)
+													Request with Planning ({tasks.length} phases)
 												</span>
 												{!isCollapsed && (
 													<span

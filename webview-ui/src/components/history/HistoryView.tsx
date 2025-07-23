@@ -559,7 +559,7 @@ const HistoryView = ({ onDone }: HistoryViewProps) => {
 												}}
 											/>
 											<span
-												className="codicon codicon-organization"
+												className="codicon codicon-collapse-all"
 												style={{ color: "var(--vscode-button-background)" }}
 											/>
 											<span
@@ -568,7 +568,7 @@ const HistoryView = ({ onDone }: HistoryViewProps) => {
 													fontWeight: 600,
 													fontSize: "0.9em",
 												}}>
-												Planning Session ({tasks.length} phases)
+												Request with Planning ({tasks.length} phases)
 											</span>
 											{!isCollapsed && (
 												<span
