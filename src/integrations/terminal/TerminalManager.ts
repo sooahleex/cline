@@ -95,7 +95,7 @@ export class TerminalManager {
 	private processes: Map<number, TerminalProcess> = new Map()
 	private disposables: vscode.Disposable[] = []
 	private shellIntegrationTimeout: number = 4000
-	private terminalReuseEnabled: boolean = true
+	private terminalReuseEnabled: boolean = false
 	private terminalOutputLineLimit: number = 500
 	private defaultTerminalProfile: string = "default"
 

@@ -219,7 +219,7 @@ export class Task {
 			this.terminalManager = new TerminalManager()
 		}
 		this.terminalManager.setShellIntegrationTimeout(shellIntegrationTimeout)
-		this.terminalManager.setTerminalReuseEnabled(terminalReuseEnabled ?? true)
+		this.terminalManager.setTerminalReuseEnabled(terminalReuseEnabled ?? false)
 		this.terminalManager.setTerminalOutputLineLimit(terminalOutputLineLimit)
 		this.terminalManager.setDefaultTerminalProfile(defaultTerminalProfile)
 

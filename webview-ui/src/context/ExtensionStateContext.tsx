@@ -190,7 +190,7 @@ export const ExtensionStateContextProvider: React.FC<{
 		localWorkflowToggles: {},
 		globalWorkflowToggles: {},
 		shellIntegrationTimeout: 4000,
-		terminalReuseEnabled: true,
+		terminalReuseEnabled: false,
 		terminalOutputLineLimit: 500,
 		defaultTerminalProfile: "default",
 		isNewUser: false,

@@ -563,7 +563,7 @@ export async function getAllExtensionState(context: vscode.ExtensionContext) {
 		planActSeparateModelsSetting,
 		enableCheckpointsSetting: enableCheckpointsSetting,
 		shellIntegrationTimeout: shellIntegrationTimeout || 4000,
-		terminalReuseEnabled: terminalReuseEnabled ?? true,
+		terminalReuseEnabled: terminalReuseEnabled ?? false,
 		terminalOutputLineLimit: terminalOutputLineLimit ?? 500,
 		defaultTerminalProfile: defaultTerminalProfile ?? "default",
 		globalWorkflowToggles: globalWorkflowToggles || {},

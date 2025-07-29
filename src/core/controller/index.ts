@@ -230,7 +230,7 @@ export class Controller {
 			this,
 			isPhaseRoot,
 			shellIntegrationTimeout,
-			terminalReuseEnabled ?? true,
+			terminalReuseEnabled ?? false,
 			terminalOutputLineLimit ?? 500,
 			defaultTerminalProfile ?? "default",
 			enableCheckpointsSetting ?? true,

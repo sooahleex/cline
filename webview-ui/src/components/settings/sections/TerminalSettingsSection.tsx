@@ -124,7 +124,7 @@ export const TerminalSettingsSection: React.FC<TerminalSettingsSectionProps> = (
 					<div className="mb-4">
 						<div className="flex items-center mb-2">
 							<VSCodeCheckbox
-								checked={terminalReuseEnabled ?? true}
+								checked={terminalReuseEnabled ?? false}
 								onChange={(event) => handleTerminalReuseChange(event as Event)}>
 								Enable aggressive terminal reuse
 							</VSCodeCheckbox>
