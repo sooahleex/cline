@@ -10,7 +10,7 @@ const production = process.argv.includes("--production")
 const watch = process.argv.includes("--watch")
 const standalone = process.argv.includes("--standalone")
 const e2eBuild = process.argv.includes("--e2e-build")
-const destDir = standalone ? "dist-standalone" : "dist"
+const destDir = process.env.BUILD_OUTPUT_DIR || (standalone ? "dist-standalone" : "dist")
 
 /**
  * @type {import('esbuild').Plugin}
@@ -91,7 +91,7 @@ const copyWasmFiles = {
 		build.onEnd(() => {
 			// tree sitter
 			const sourceDir = path.join(__dirname, "node_modules", "web-tree-sitter")
-			const targetDir = path.join(__dirname, destDir)
+			const targetDir = path.isAbsolute(destDir) ? destDir : path.join(__dirname, destDir)
 
 			// Copy tree-sitter.wasm
 			fs.copyFileSync(path.join(sourceDir, "tree-sitter.wasm"), path.join(targetDir, "tree-sitter.wasm"))

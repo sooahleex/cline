@@ -2,6 +2,11 @@
 // for the documentation about the tasks.json format
 {
 	"version": "2.0.0",
+	"options": {
+		"env": {
+			"BUILD_OUTPUT_DIR": "C:\\Users\\samsung\\Desktop\\dist"
+		}
+	},
 	"tasks": [
 		{
 			"label": "compile-standalone",
@@ -262,7 +267,7 @@
 			"dependsOn": [
 				"watch"
 			],
-			"command": "rm -rf ${workspaceFolder}/dist/tmp/user && mkdir -p ${workspaceFolder}/dist/tmp/user"
+			"command": "rmdir /s /q \"C:\\Users\\samsung\\Desktop\\dist\\tmp\\user\" 2>nul ; mkdir \"C:\\Users\\samsung\\Desktop\\dist\\tmp\\user\""
 		}
 	],
 	"inputs": [
