@@ -337,7 +337,7 @@ class StandaloneTerminalManager {
 		this.processes = new Map()
 		this.terminalIds = new Set()
 		this.shellIntegrationTimeout = 4000
-		this.terminalReuseEnabled = true
+		this.terminalReuseEnabled = false
 		this.terminalOutputLineLimit = 500
 		this.defaultTerminalProfile = "default"
 	}
