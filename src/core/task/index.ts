@@ -567,18 +567,6 @@ export class Task {
 		)
 	}
 
-	// Create a temporary API handler with a specific model
-	private createTemporaryApiHandler(modelName: string): ApiHandler {
-		// Get apiProvider and other properties directly from the original API
-		const tempConfig: ApiConfiguration = {
-			...this.stateManager.getApiConfiguration(),
-			actModeOpenRouterModelId: modelName, // Override with the requested model
-		}
-
-		const mode = this.stateManager.getGlobalSettingsKey("mode")
-		// Build and return the temporary API handler
-		return buildApiHandler(tempConfig, mode)
-	}
 	// Communicate with webview
 
 	// partial has three valid states true (partial message), false (completion of partial message), undefined (individual complete message)
@@ -1138,21 +1126,20 @@ export class Task {
 
 				const firstAssistantMessage = await this.initiateTaskLoopCaptureFirstResponse(userBlocks)
 				if (!this.controller.phaseTracker) {
-					throw new Error("PhaseTracker not initialized")
+					this.controller.phaseTracker = new PhaseTracker(
+						"Project Overview",
+						"Execution Plan",
+						this.controller,
+					)
 				}
 				this.controller.phaseTracker.updateTaskIdPhase(0, this.taskId)
-				// 고정된 plan.txt 파일에서 플랜 로드 (extension context 전달)
-				// const { projOverview, executionPlan, requirements, phases: planSteps } = await parsePlanFromFixedFile(this.context, this.sidebarController.phaseTracker.getBaseUri())
+
 				const saveUri = this.controller.phaseTracker.getBaseUri(this.controller)
-				// TODO: PLANNING
-				const {
-					projOverview,
-					executionPlan,
-					requirements,
-					phases: planSteps,
-				} = parsePlanFromOutput(firstAssistantMessage)
-				// const { projOverview, executionPlan, requirements, phases: planSteps } = parsePlanFromOutput(userBlocks)
-				const parsedPlan = { projOverview, executionPlan, requirements, phases: planSteps }
+
+				// Phase Plan을 parsing하여 구조화된 데이터로 변환
+				const { projOverview, executionPlan, phases: planSteps } = parsePlanFromOutput(firstAssistantMessage)
+				// const { projOverview, executionPlan, phases: planSteps } = parsePlanFromOutput(userBlocks)
+				const parsedPlan = { projOverview, executionPlan, phases: planSteps }
 				const { fileUri, snapshotUri } = await saveParsedPlanAsMarkdown(parsedPlan, saveUri, this.taskId).catch(
 					(error) => {
 						console.warn("[parsePlanFromOutput] Failed to save plan markdown file:", error)
@@ -1172,9 +1159,8 @@ export class Task {
 					diffExisted = await this.confirmPlanAndUpdate(fileUri, snapshotUri)
 				}
 				if (!diffExisted) {
-					this.controller.phaseTracker!.projOverview = projOverview
+					this.controller.phaseTracker!.parsedProjOverview = projOverview
 					this.controller.phaseTracker!.executionPlan = executionPlan
-					this.controller.phaseTracker!.requirements = requirements
 					this.controller.phaseTracker.addPhasesFromPlan(planSteps)
 				}
 
@@ -1400,11 +1386,12 @@ export class Task {
 			const mdBuf = await vscode.workspace.fs.readFile(planUri)
 			const mdRaw = Buffer.from(mdBuf).toString("utf8")
 
-			const { projOverview, executionPlan, requirements, phases } = parsePlanFromOutput(mdRaw, true)
+			const { projOverview, executionPlan, phases } = parsePlanFromOutput(mdRaw, true)
 
-			this.controller.phaseTracker!.projOverview = projOverview
+			// parsePlanFromOutput now returns ProjectOverview object, but PhaseTracker.projOverview is still string
+			// We need to update both the original string and parsed object
+			this.controller.phaseTracker!.parsedProjOverview = projOverview
 			this.controller.phaseTracker!.executionPlan = executionPlan
-			this.controller.phaseTracker!.requirements = requirements
 			this.controller.phaseTracker!.replacePhasesFromPlan(phases)
 
 			// Save checkpoint with updated plan
@@ -1805,7 +1792,7 @@ export class Task {
 		}
 
 		// reuse the existing streaming machinery
-		const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1, "anthropic/claude-sonnet-4")
+		const firstStream = this.attemptApiRequest(/*prevIndex=*/ -1)
 		let assistantText = ""
 		const start = performance.now()
 
@@ -1817,7 +1804,7 @@ export class Task {
 		let totalCost: number | undefined
 
 		// Create a partial message for streaming updates
-		await this.say("text", "Planning in progress...", undefined, undefined, true)
+		await this.say("text", "*Planning in progress...*", undefined, undefined, true)
 
 		// Track progress
 		let totalChunks = 0
@@ -2480,7 +2467,7 @@ export class Task {
 		this.taskState.didAutomaticallyRetryFailedApiRequest = true
 	}
 
-	async *attemptApiRequest(previousApiReqIndex: number, forceModel?: string): ApiStream {
+	async *attemptApiRequest(previousApiReqIndex: number): ApiStream {
 		// Wait for MCP servers to be connected before generating system prompt
 		await pWaitFor(() => this.mcpHub.isConnecting !== true, {
 			timeout: 10_000,
@@ -2590,11 +2577,9 @@ export class Task {
 			await this.messageStateHandler.saveClineMessagesAndUpdateHistory()
 			// saves task history item which we use to keep track of conversation history deleted range
 		}
-
-		// Use forced model if specified, otherwise use default api
-		const apiToUse = this.taskState.isPhaseRoot && forceModel ? this.createTemporaryApiHandler(forceModel) : this.api
-		const stream = apiToUse.createMessage(
-			this.taskState.isPhaseRoot ? PROMPTS.PLANNING : systemPrompt,
+		const autoApprovalSettings = this.stateManager.getGlobalSettingsKey("autoApprovalSettings")
+		const stream = this.api.createMessage(
+			this.taskState.isPhaseRoot && autoApprovalSettings.actions.usePhasePlanning ? PROMPTS.PLANNING : systemPrompt,
 			contextManagementMetadata.truncatedConversationHistory,
 			tools,
 		)
