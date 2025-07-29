@@ -12,15 +12,15 @@
 			"args": [
 				"--extensionDevelopmentPath=${workspaceFolder}",
 				"--disable-workspace-trust",
-				"${workspaceFolder}"
+				"C:\\Users\\samsung\\Desktop"
 			],
 			"outFiles": [
-				"${workspaceFolder}/dist/**/*.js"
+				"C:\\Users\\samsung\\Desktop\\dist\\**\\*.js"
 			],
 			"preLaunchTask": "${defaultBuildTask}",
 			"env": {
 				"IS_DEV": "true",
-				"DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
+				"DEV_WORKSPACE_FOLDER": "C:\\Users\\samsung\\Desktop",
 				"CLINE_ENVIRONMENT": "production",
 				"USE_MODULAR_SYSTEM_PROMPT": "true"
 			}
@@ -32,15 +32,15 @@
 			"args": [
 				"--extensionDevelopmentPath=${workspaceFolder}",
 				"--disable-workspace-trust",
-				"${workspaceFolder}"
+				"C:\\Users\\samsung\\Desktop"
 			],
 			"outFiles": [
-				"${workspaceFolder}/dist/**/*.js"
+				"C:\\Users\\samsung\\Desktop\\dist\\**\\*.js"
 			],
 			"preLaunchTask": "${defaultBuildTask}",
 			"env": {
 				"IS_DEV": "true",
-				"DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
+				"DEV_WORKSPACE_FOLDER": "C:\\Users\\samsung\\Desktop",
 				"CLINE_ENVIRONMENT": "staging",
 				"USE_MODULAR_SYSTEM_PROMPT": "true"
 			}
@@ -52,15 +52,15 @@
 			"args": [
 				"--extensionDevelopmentPath=${workspaceFolder}",
 				"--disable-workspace-trust",
-				"${workspaceFolder}"
+				"C:\\Users\\samsung\\Desktop"
 			],
 			"outFiles": [
-				"${workspaceFolder}/dist/**/*.js"
+				"C:\\Users\\samsung\\Desktop\\dist\\**\\*.js"
 			],
 			"preLaunchTask": "${defaultBuildTask}",
 			"env": {
 				"IS_DEV": "true",
-				"DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
+				"DEV_WORKSPACE_FOLDER": "C:\\Users\\samsung\\Desktop",
 				"CLINE_ENVIRONMENT": "local",
 				"USE_MODULAR_SYSTEM_PROMPT": "true"
 			}
@@ -71,15 +71,15 @@
 			"request": "launch",
 			"runtimeExecutable": "${execPath}",
 			"args": [
-				"--user-data-dir=${workspaceFolder}/dist/tmp/user",
+				"--user-data-dir=C:\\Users\\samsung\\Desktop\\dist\\tmp\\user",
 				"--profile-temp",
 				"--sync=off",
 				"--disable-extensions",
 				"--extensionDevelopmentPath=${workspaceFolder}",
-				"${workspaceFolder}"
+				"C:\\Users\\samsung\\Desktop"
 			],
 			"outFiles": [
-				"${workspaceFolder}/dist/**/*.js"
+				"C:\\Users\\samsung\\Desktop\\dist\\**\\*.js"
 			],
 			"preLaunchTask": "clean-tmp-user",
 			"internalConsoleOptions": "openOnSessionStart",
@@ -87,7 +87,7 @@
 			"env": {
 				"IS_DEV": "true",
 				"TEMP_PROFILE": "true",
-				"DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
+				"DEV_WORKSPACE_FOLDER": "C:\\Users\\samsung\\Desktop",
 				"CLINE_ENVIRONMENT": "production",
 				"USE_MODULAR_SYSTEM_PROMPT": "true"
 			}
@@ -104,16 +104,16 @@
 				"${workspaceFolder}/**",
 				"!**/node_modules/**"
 			],
-			"cwd": "${workspaceFolder}/dist-standalone",
+			"cwd": "C:\\Users\\samsung\\Desktop\\dist-standalone",
 			"outFiles": [
-				"${workspaceFolder}/dist-standalone/**/*.js"
+				"C:\\Users\\samsung\\Desktop\\dist-standalone\\**\\*.js"
 			],
 			"preLaunchTask": "compile-standalone",
 			"env": {
 				// Turns on grpc debug log.
 				//"GRPC_TRACE": "all",
 				//"GRPC_VERBOSITY": "DEBUG",
-				"NODE_PATH": "${workspaceFolder}/dist-standalone/node_modules"
+				"NODE_PATH": "C:\\Users\\samsung\\Desktop\\dist-standalone\\node_modules"
 			},
 			"program": "cline-core.js"
 		}
