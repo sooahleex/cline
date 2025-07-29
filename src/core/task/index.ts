@@ -2335,7 +2335,7 @@ export class Task {
 		}
 		// Use forced model if specified, otherwise use default api
 		const stream = apiToUse.createMessage(
-			this.taskState.isPhaseRoot ? PROMPTS.PLANNING : systemPrompt,
+			this.taskState.isPhaseRoot && this.autoApprovalSettings.actions.usePhasePlanning ? PROMPTS.PLANNING : systemPrompt,
 			contextManagementMetadata.truncatedConversationHistory,
 		)
 
