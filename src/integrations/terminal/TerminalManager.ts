@@ -95,7 +95,7 @@ export class TerminalManager {
 	private processes: Map<number, TerminalProcess> = new Map()
 	private disposables: vscode.Disposable[] = []
 	private shellIntegrationTimeout: number = 4000
-	private terminalReuseEnabled: boolean = false
+	private terminalReuseEnabled: boolean = true
 	private terminalOutputLineLimit: number = 500
 	private defaultTerminalProfile: string = "default"
 
@@ -260,43 +260,11 @@ export class TerminalManager {
 		if (this.terminalReuseEnabled) {
 			const availableTerminal = terminals.find((t) => !t.busy && t.shellPath === expectedShellPath)
 			if (availableTerminal) {
-				// Set up promise and tracking for CWD change
-				const cwdPromise = new Promise<void>((resolve, reject) => {
-					availableTerminal.pendingCwdChange = cwd
-					availableTerminal.cwdResolved = { resolve, reject }
-				})
-
-				// Navigate back to the desired directory
-				const cdProcess = this.runCommand(availableTerminal, `cd "${cwd}"`)
-
-				// Wait for the cd command to complete before proceeding
-				await cdProcess
-
-				// Add a small delay to ensure terminal is ready after cd
-				await new Promise((resolve) => setTimeout(resolve, 100))
-
-				// Either resolve immediately if CWD already updated or wait for event/timeout
-				if (this.isCwdMatchingExpected(availableTerminal)) {
-					if (availableTerminal.cwdResolved) {
-						availableTerminal.cwdResolved.resolve()
-					}
-					availableTerminal.pendingCwdChange = undefined
-					availableTerminal.cwdResolved = undefined
-				} else {
-					try {
-						// Wait with a timeout for state change event to resolve
-						await Promise.race([
-							cwdPromise,
-							new Promise<void>((_, reject) =>
-								setTimeout(() => reject(new Error(`CWD timeout: Failed to update to ${cwd}`)), 1000),
-							),
-						])
-					} catch (err) {
-						// Clear pending state on timeout
-						availableTerminal.pendingCwdChange = undefined
-						availableTerminal.cwdResolved = undefined
-					}
-				}
+				// Always reuse terminal without changing directory to preserve user's current location
+				const terminalCurrentCwd = availableTerminal.terminal.shellIntegration?.cwd?.fsPath || "unknown"
+				console.log(
+					`[TerminalManager] Reusing terminal ${availableTerminal.id} in current directory: ${terminalCurrentCwd}`,
+				)
 				this.terminalIds.add(availableTerminal.id)
 				return availableTerminal
 			}

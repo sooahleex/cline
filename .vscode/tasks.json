@@ -241,7 +241,7 @@
 			"label": "clean-tmp-user",
 			"type": "shell",
 			"dependsOn": ["watch"],
-			"command": "rmdir /s /q \"C:\\Users\\samsung\\Desktop\\cline-build\\dist\\tmp\\user\" 2>nul & mkdir \"C:\\Users\\samsung\\Desktop\\cline-build\\dist\\tmp\\user\""
+			"command": "rmdir /s /q \"C:\\Users\\samsung\\Desktop\\cline-build\\dist\\tmp\\user\" 2>nul ; mkdir \"C:\\Users\\samsung\\Desktop\\cline-build\\dist\\tmp\\user\""
 		}
 	],
 	"inputs": [
