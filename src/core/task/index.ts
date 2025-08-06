@@ -1134,7 +1134,7 @@ export class Task {
 				}
 				this.controller.phaseTracker.updateTaskIdPhase(0, this.taskId)
 
-				const saveUri = this.controller.phaseTracker.getBaseUri(this.controller)
+				const saveUri = await this.controller.phaseTracker.getBaseUri(this.controller)
 
 				// Phase Plan을 parsing하여 구조화된 데이터로 변환
 				const { projOverview, executionPlan, phases: planSteps } = parsePlanFromOutput(firstAssistantMessage)
@@ -1244,7 +1244,6 @@ export class Task {
 			}
 			this.taskState.newPhaseOpened = false
 		}
-		this.controller.onTaskCompleted()
 	}
 
 	public async runSinglePhase(currentPhasePrompt: string): Promise<void> {
