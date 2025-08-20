@@ -198,12 +198,12 @@ export class Controller {
 	public async spawnNewTask(newPrompt?: string, images?: string[], files?: string[]): Promise<boolean> {
 		// initTask() already clears any existing task and phase tracker
 		const response = await HostProvider.window.showMessage({
-				type: ShowMessageType.INFORMATION,
-				message: "Planning 중 새로운 Task 생성 시 기존 Planning이 초기화 됩니다. \n 새로운 Task를 생성하시겠습니까?",
-				options: {
-					items: ["Yes", "No"],
-				},
-			})
+			type: ShowMessageType.INFORMATION,
+			message: "Planning 중 새로운 Task 생성 시 기존 Planning이 초기화 됩니다. \n 새로운 Task를 생성하시겠습니까?",
+			options: {
+				items: ["Yes", "No"],
+			},
+		})
 
 		if (response.selectedOption === "Yes") {
 			this.phaseTracker?.deleteCheckpoint()
